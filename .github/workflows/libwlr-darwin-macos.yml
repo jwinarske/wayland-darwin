@@ -1,0 +1,61 @@
+name: libwlr-darwin (Cocoa backend) on macOS
+
+# Compiles + links the Cocoa backend (including the Objective-C cocoa.m and the
+# AppKit/QuartzCore/CoreVideo framework links) against the built wlroots. The
+# darwin-smoke demo opens a real window and is NOT run here (runners are
+# headless); this is a compile+link check of the backend scaffold.
+
+on:
+  push:
+    paths:
+      - 'libwlr-darwin/**'
+      - 'wlroots-darwin/**'
+      - 'wayland-darwin/**'
+      - '.github/workflows/libwlr-darwin-macos.yml'
+  pull_request:
+    paths:
+      - 'libwlr-darwin/**'
+      - 'wlroots-darwin/**'
+      - 'wayland-darwin/**'
+      - '.github/workflows/libwlr-darwin-macos.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: libwlr-darwin-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Homebrew deps
+        run: brew install cmake ninja meson pkgconf libffi expat libxml2 libxkbcommon pixman
+
+      - name: Build libwlr-darwin
+        env:
+          PREFIX: ${{ github.workspace }}/prefix
+          SRC: ${{ github.workspace }}/src
+        run: ./libwlr-darwin/build-macos.sh
+
+      - name: Upload meson logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: libwlr-darwin-meson-logs-${{ matrix.os }}
+          path: |
+            libwlr-darwin/build-macos/meson-logs/
+          if-no-files-found: ignore

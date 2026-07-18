@@ -1,0 +1,2 @@
+option('examples', type: 'boolean', value: true,
+	description: 'Build the darwin-smoke example compositor')
