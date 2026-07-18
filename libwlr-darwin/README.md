@@ -43,11 +43,13 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 |---|---|---|
 | `include/wlr-darwin.h` | C | public API: `wlr_darwin_application_run`, `wlr_darwin_backend_create`, `wlr_darwin_add_output` |
 | `src/darwin.h` | C | internal backend/output structs |
-| `src/backend.c` | C | `wlr_backend_impl` (start/destroy) + the input-bridge socketpair |
+| `src/backend.c` | C | `wlr_backend_impl` + one virtual keyboard/pointer + input-record decode → wlr events |
 | `src/output.c` | C | `wlr_output_impl` (test/commit/destroy) + present + frame clock |
 | `src/allocator.c` | C | IOSurface allocator: `wlr_allocator_interface` + `wlr_buffer_impl` |
+| `src/keymap.c` | C | kVK → evdev key-code table (the single maintained pivot) |
+| `src/input.h` | C | main→compositor input wire format |
 | `src/cocoa.h` | C | the C↔ObjC boundary |
-| `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer lifecycle, IOSurface, present, CVDisplayLink |
+| `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer, IOSurface, present, CVDisplayLink, NSEvent capture |
 | `example/darwin-smoke.c` | C | minimal compositor: opens a window, renders a colour each frame |
 
 All Objective-C is confined to `cocoa.m` behind the `cocoa.h` C boundary.
@@ -76,10 +78,24 @@ macOS`) compiles + links it on Apple Silicon.
 To see a window, run the installed `darwin-smoke` from a normal login session
 (not over headless SSH/CI).
 
+## Input
+
+The backend owns one virtual keyboard + one pointer (D5c). On the main thread,
+the content view captures NSEvents and serializes them (`input.h` records) to
+the main→compositor fd; the backend decodes them into `wlr_keyboard` /
+`wlr_pointer` events:
+
+- **Keyboard** — `NSEvent.keyCode` (kVK) → evdev via `keymap.c`; `wlr_keyboard_notify_key`
+  with `update_state` so the compositor-owned xkb keymap tracks modifiers.
+  `flagsChanged` drives modifier press/release; key repeat is left client-side.
+- **Pointer** — absolute motion (window coords normalized to the output),
+  buttons (`BTN_LEFT/RIGHT/MIDDLE`), and scroll: precise (trackpad) → FINGER
+  axis source, otherwise WHEEL with discrete steps.
+- NSTouch/gestures are not yet surfaced (indirect touch must **not** become
+  `wlr_touch`); pointer-gesture mapping is a later addition.
+
 ## Next
 
-- Input: serialize NSEvents (keyboard kVK→evdev, pointer, precise scroll) over
-  the main→compositor fd and translate to `wlr_keyboard`/`wlr_pointer` events.
 - A Metal renderer (accelerated path) sampling the same IOSurfaces.
 - Window resize → `wlr_output_send_request_state`; multi-output; `backingScaleFactor`.
 - tinywl on the Darwin backend.

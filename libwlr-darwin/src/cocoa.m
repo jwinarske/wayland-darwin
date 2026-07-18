@@ -15,20 +15,170 @@
 #import <CoreVideo/CoreVideo.h>
 #import <IOSurface/IOSurface.h>
 
+#include <linux/input-event-codes.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include "cocoa.h"
+#include "input.h"
 
 /* DRM fourcc codes we understand, defined locally to avoid a libdrm include. */
 #define DARWIN_DRM_FORMAT_XRGB8888 0x34325258 /* 'XR24' */
 #define DARWIN_DRM_FORMAT_ARGB8888 0x34325241 /* 'AR24' */
+
+/* ---- event-capturing view ------------------------------------------------- */
+
+@interface WlrDarwinView : NSView
+@property (assign) int inputFd; /* write end of the main->compositor bridge */
+@property (strong) NSTrackingArea *tracking;
+@end
+
+@implementation WlrDarwinView
+
+- (BOOL)isFlipped { return YES; }              /* top-left origin, like Wayland */
+- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)canBecomeKeyView { return YES; }
+
+- (void)emit:(struct darwin_input_event)ev {
+	if (self.inputFd >= 0) {
+		(void)write(self.inputFd, &ev, sizeof(ev));
+	}
+}
+
+static uint32_t event_time_msec(NSEvent *e) {
+	return (uint32_t)(e.timestamp * 1000.0);
+}
+
+/* -- keyboard: kVK -> evdev, xkb (compositor-side) does the rest -- */
+
+- (void)sendKeyCode:(uint16_t)kvk pressed:(BOOL)pressed time:(uint32_t)t {
+	uint32_t evdev = darwin_kvk_to_evdev(kvk);
+	if (evdev == 0) {
+		return;
+	}
+	struct darwin_input_event ev = {
+		.type = DARWIN_INPUT_KEY, .time_msec = t,
+		.code = evdev, .state = pressed ? 1 : 0,
+	};
+	[self emit:ev];
+}
+
+- (void)keyDown:(NSEvent *)e {
+	if (e.isARepeat) {
+		return; /* key repeat is client-side (D5b) */
+	}
+	[self sendKeyCode:e.keyCode pressed:YES time:event_time_msec(e)];
+}
+
+- (void)keyUp:(NSEvent *)e {
+	[self sendKeyCode:e.keyCode pressed:NO time:event_time_msec(e)];
+}
+
+static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
+	switch (kvk) {
+	case 0x38: case 0x3C: return NSEventModifierFlagShift;
+	case 0x3B: case 0x3E: return NSEventModifierFlagControl;
+	case 0x3A: case 0x3D: return NSEventModifierFlagOption;
+	case 0x37: case 0x36: return NSEventModifierFlagCommand;
+	case 0x39:            return NSEventModifierFlagCapsLock;
+	default:              return 0;
+	}
+}
+
+- (void)flagsChanged:(NSEvent *)e {
+	NSEventModifierFlags mask = mask_for_keycode(e.keyCode);
+	if (mask == 0) {
+		return;
+	}
+	BOOL down = (e.modifierFlags & mask) != 0;
+	[self sendKeyCode:e.keyCode pressed:down time:event_time_msec(e)];
+}
+
+/* -- pointer -- */
+
+- (void)sendMotion:(NSEvent *)e {
+	NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
+	NSSize sz = self.bounds.size;
+	if (sz.width <= 0 || sz.height <= 0) {
+		return;
+	}
+	double x = p.x / sz.width, y = p.y / sz.height;
+	x = x < 0 ? 0 : (x > 1 ? 1 : x);
+	y = y < 0 ? 0 : (y > 1 ? 1 : y);
+	struct darwin_input_event ev = {
+		.type = DARWIN_INPUT_MOTION_ABS, .time_msec = event_time_msec(e),
+		.x = x, .y = y,
+	};
+	[self emit:ev];
+}
+
+- (void)mouseMoved:(NSEvent *)e { [self sendMotion:e]; }
+- (void)mouseDragged:(NSEvent *)e { [self sendMotion:e]; }
+- (void)rightMouseDragged:(NSEvent *)e { [self sendMotion:e]; }
+- (void)otherMouseDragged:(NSEvent *)e { [self sendMotion:e]; }
+
+- (void)sendButton:(uint32_t)button pressed:(BOOL)pressed time:(uint32_t)t {
+	struct darwin_input_event ev = {
+		.type = DARWIN_INPUT_BUTTON, .time_msec = t,
+		.code = button, .state = pressed ? 1 : 0,
+	};
+	[self emit:ev];
+}
+
+- (void)mouseDown:(NSEvent *)e { [self sendButton:BTN_LEFT pressed:YES time:event_time_msec(e)]; }
+- (void)mouseUp:(NSEvent *)e { [self sendButton:BTN_LEFT pressed:NO time:event_time_msec(e)]; }
+- (void)rightMouseDown:(NSEvent *)e { [self sendButton:BTN_RIGHT pressed:YES time:event_time_msec(e)]; }
+- (void)rightMouseUp:(NSEvent *)e { [self sendButton:BTN_RIGHT pressed:NO time:event_time_msec(e)]; }
+- (void)otherMouseDown:(NSEvent *)e { [self sendButton:BTN_MIDDLE pressed:YES time:event_time_msec(e)]; }
+- (void)otherMouseUp:(NSEvent *)e { [self sendButton:BTN_MIDDLE pressed:NO time:event_time_msec(e)]; }
+
+- (void)scrollWheel:(NSEvent *)e {
+	uint32_t t = event_time_msec(e);
+	BOOL precise = e.hasPreciseScrollingDeltas;
+	uint32_t source = precise ? 1u /* FINGER */ : 0u /* WHEEL */;
+	/* Wayland's positive axis is down/right; macOS deltas are inverted. */
+	double dy = -e.scrollingDeltaY;
+	double dx = -e.scrollingDeltaX;
+	if (dy != 0) {
+		struct darwin_input_event ev = {
+			.type = DARWIN_INPUT_AXIS, .time_msec = t,
+			.state = 0 /* VERTICAL */, .aux = source,
+			.x = precise ? dy : dy * 10.0,
+			.discrete = precise ? 0 : (dy > 0 ? 120 : -120),
+		};
+		[self emit:ev];
+	}
+	if (dx != 0) {
+		struct darwin_input_event ev = {
+			.type = DARWIN_INPUT_AXIS, .time_msec = t,
+			.state = 1 /* HORIZONTAL */, .aux = source,
+			.x = precise ? dx : dx * 10.0,
+			.discrete = precise ? 0 : (dx > 0 ? 120 : -120),
+		};
+		[self emit:ev];
+	}
+}
+
+- (void)updateTrackingAreas {
+	[super updateTrackingAreas];
+	if (self.tracking) {
+		[self removeTrackingArea:self.tracking];
+	}
+	NSTrackingAreaOptions opts = NSTrackingActiveInKeyWindow |
+		NSTrackingMouseMoved | NSTrackingInVisibleRect;
+	self.tracking = [[NSTrackingArea alloc] initWithRect:self.bounds
+		options:opts owner:self userInfo:nil];
+	[self addTrackingArea:self.tracking];
+}
+
+@end
 
 /* ---- window object -------------------------------------------------------- */
 
 @interface WlrDarwinWindow : NSObject {
 @public
 	NSWindow *window;
+	WlrDarwinView *view;
 	CALayer *layer;
 	CVDisplayLinkRef displayLink;
 	int frameFd;  /* write end: one byte per display tick (D6) */
@@ -63,17 +213,23 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 		nsw.title = @"wlroots";
 		nsw.releasedWhenClosed = NO;
 
-		NSView *view = nsw.contentView;
+		WlrDarwinView *view = [[WlrDarwinView alloc] initWithFrame:rect];
+		view.inputFd = input_event_fd;
 		view.wantsLayer = YES;
+		nsw.contentView = view;
+		nsw.acceptsMouseMovedEvents = YES;
+
 		CALayer *layer = view.layer;
 		layer.contentsGravity = kCAGravityResize;
 		layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
 
 		[nsw center];
 		[nsw makeKeyAndOrderFront:nil];
+		[nsw makeFirstResponder:view];
 
 		win = [WlrDarwinWindow new];
 		win->window = nsw;
+		win->view = view;
 		win->layer = layer;
 		win->frameFd = frame_event_fd;
 		win->inputFd = input_event_fd;
