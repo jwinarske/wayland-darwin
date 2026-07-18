@@ -96,9 +96,12 @@ main(void)
 	wl_event_loop_add_signal(loop, SIGUSR1, on_signal, &fired);
 	wl_event_loop_add_idle(loop, on_idle, &fired);
 
-	/* Make the fd and signal sources ready before we block. */
+	/* Make the fd and signal sources ready. Use kill(getpid(), ...) rather
+	 * than raise(): on macOS raise() is thread-directed (pthread_kill), and
+	 * kqueue's EVFILT_SIGNAL — which backs epoll-shim's signalfd — only
+	 * observes process-directed signals. */
 	(void)write(pipefd[1], "x", 1);
-	raise(SIGUSR1);
+	kill(getpid(), SIGUSR1);
 
 	/* Dispatch a few times so the 30 ms timer has a chance to expire. */
 	for (int i = 0; i < 20; i++) {
