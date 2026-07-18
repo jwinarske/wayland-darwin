@@ -28,6 +28,12 @@ concurrency:
 permissions:
   contents: read
 
+# GitHub's macOS runners ship an untrusted third-party tap (aws/tap); the newer
+# Homebrew refuses to proceed without tap trust. We only install core formulae,
+# so disable the trust check.
+env:
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
+
 jobs:
   build:
     name: build (${{ matrix.os }})

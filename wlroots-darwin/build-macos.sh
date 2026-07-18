@@ -10,6 +10,10 @@
 # Everything installs into a private PREFIX; nothing touches the system.
 set -euo pipefail
 
+# Newer Homebrew refuses to proceed when an untrusted third-party tap is present
+# (GitHub's runners ship aws/tap). We only use core formulae; disable the check.
+export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"                 # repo root: wayland-darwin/ + wlroots-darwin/
 SRC="${SRC:-$ROOT/src}"
