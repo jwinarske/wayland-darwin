@@ -89,9 +89,20 @@ full referenced set regardless, to guarantee a one-shot link.
 - [x] Vendored FreeBSD `input-event-codes.h` (provided via `-Icompat`, no patch needed).
 - [x] `build-macos.sh` (delegates to wayland-darwin for libwayland, builds the
   shim + wayland-protocols, configures wlroots with the matrix) + CI workflow.
-- [ ] **Green on a macOS runner** — the build has not yet run on Darwin; expect
-  the same fix-forward iteration wayland-darwin went through (werror is off, but
-  clang/macOS specifics may surface; the linker will name any missing stub).
+- [x] **Green on macOS** — `libwlroots-0.21.dylib` compiles, links, and installs
+  on both Apple Silicon runners (macos-14 / macos-15), first try. The shim
+  linked with zero missing stubs.
+- [x] **Runtime smoke** — `headless-smoke.c` stands up the always-built headless
+  backend + pixman renderer + shm allocator, creates a 640x480 output, and
+  renders + commits one frame (verified on a native Linux wlroots build; runs on
+  macOS against the shim as part of the build). This is the D2 phase-1 software
+  path working end to end.
+
+## Next
+
+Enabling a real presented output (a Cocoa/CALayer backend + IOSurface allocator)
+and standing up tinywl are the following steps; the core and its software render
+path are now proven usable on Darwin.
 
 ## Layout
 
@@ -100,5 +111,6 @@ full referenced set regardless, to guarantee a one-shot link.
 - `libdrm-compat/format.c` — real `drmGetFormatName` / modifier helpers.
 - `libdrm-compat/stubs.c` — behavioral stubs for the rest of the linked `drm*` surface.
 - `compat/linux/input-event-codes.h` — vendored FreeBSD BSD-2-Clause header.
+- `headless-smoke.c` — runtime smoke: headless + pixman renders one frame.
 - `build-macos.sh` — full build runbook (self-bootstrapping via `pin.env`).
 - `../.github/workflows/wlroots-macos.yml` — the CI workflow.

@@ -122,7 +122,17 @@ fi
 meson compile -C "$WLR_BUILD" -j "$JOBS"
 meson install -C "$WLR_BUILD"
 
+# ---- 8. runtime smoke: headless + pixman render one frame ------------------
+# Proves the software compositing path is usable (not just linkable), and
+# exercises the libdrm-compat shim live (format-set setup + allocator autocreate).
+echo "==> runtime smoke: headless + pixman render"
+cc -DWLR_USE_UNSTABLE "$HERE/headless-smoke.c" \
+	$(pkg-config --cflags --libs wlroots-0.21 wayland-server) \
+	-Wl,-rpath,"$PREFIX/lib" \
+	-o "$WLR_BUILD/headless-smoke"
+"$WLR_BUILD/headless-smoke"
+
 echo
 echo "==================================================================="
-echo " PASS — wlroots core builds and installs on macOS"
+echo " PASS — wlroots core builds AND runs (headless+pixman) on macOS"
 echo "==================================================================="
