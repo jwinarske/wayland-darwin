@@ -53,4 +53,9 @@ if get_option('examples')
 		dependencies: [wlr_darwin],
 		link_args: frameworks,
 	)
+	# tinywl: wlroots' reference compositor, adapted to the Darwin backend.
+	executable('darwin-tinywl', 'example/tinywl.c',
+		dependencies: [wlr_darwin, dependency('xkbcommon')],
+		link_args: frameworks,
+	)
 endif

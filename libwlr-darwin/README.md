@@ -51,6 +51,7 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 | `src/cocoa.h` | C | the C↔ObjC boundary |
 | `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer, IOSurface, present, CVDisplayLink, NSEvent capture |
 | `example/darwin-smoke.c` | C | minimal compositor: opens a window, renders a colour each frame |
+| `example/tinywl.c` | C | wlroots' reference compositor, adapted to the Darwin backend (runs real clients) |
 
 All Objective-C is confined to `cocoa.m` behind the `cocoa.h` C boundary.
 
@@ -75,8 +76,11 @@ currency: `MTLTexture` from the same IOSurface).
 libwlr-darwin) into a private prefix. CI (`libwlr-darwin (Cocoa backend) on
 macOS`) compiles + links it on Apple Silicon.
 
-To see a window, run the installed `darwin-smoke` from a normal login session
-(not over headless SSH/CI).
+To see a window, run `darwin-smoke` (a colour fill) or `darwin-tinywl` from a
+normal login session (not over headless SSH/CI). `darwin-tinywl` is wlroots'
+reference compositor with ~10 lines changed (the D3 trampoline plus
+`wlr_darwin_backend_create` / `wlr_darwin_allocator_create`); a Wayland client
+launched into its `WAYLAND_DISPLAY` renders as tiled surfaces in the window.
 
 ## Input
 
