@@ -1,0 +1,31 @@
+From 321993e226a700169a196317c491faedc6f91e0f Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Sat, 18 Jul 2026 12:00:00 -0700
+Subject: [PATCH] build: make librt optional (Darwin has no separate librt)
+
+macOS provides clock_gettime and friends in libc with no librt, so the
+unconditional cc.find_library('rt') fails configure. Mark it optional; a
+not-found optional dependency contributes nothing to the link.
+---
+ meson.build | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/meson.build b/meson.build
+index 90200d4..fa73d9e 100644
+--- a/meson.build
++++ b/meson.build
+@@ -121,7 +121,10 @@ pixman = dependency('pixman-1',
+ 	default_options: ['werror=false'],
+ )
+ math = cc.find_library('m')
+-rt = cc.find_library('rt')
++# librt does not exist on Darwin (clock_gettime etc. are in libc); make it
++# optional so configure succeeds. A not-found optional dependency contributes
++# nothing to the link, which is correct on platforms without a separate librt.
++rt = cc.find_library('rt', required: false)
+ 
+ wlr_files = []
+ wlr_deps = [
+-- 
+2.55.0
+
