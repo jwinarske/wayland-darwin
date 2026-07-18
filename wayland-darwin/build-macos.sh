@@ -31,7 +31,12 @@ fetch_pin() {  # url ref dest
 	mkdir -p "$dest"
 	git -C "$dest" init -q
 	git -C "$dest" remote add origin "$url" 2>/dev/null || true
-	git -C "$dest" fetch -q --depth 1 origin "$ref"
+	# freedesktop gitlab returns transient 500s; retry the fetch.
+	local n=1
+	while ! git -C "$dest" fetch -q --depth 1 origin "$ref"; do
+		if [ "$n" -ge 5 ]; then echo "    fetch failed after $n attempts" >&2; exit 1; fi
+		echo "    fetch failed (attempt $n), retrying in 5s..." >&2; sleep 5; n=$((n + 1))
+	done
 	git -C "$dest" checkout -q FETCH_HEAD
 }
 mkdir -p "$SRC"
