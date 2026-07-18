@@ -53,6 +53,17 @@ echo "==> PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
 # ---- 1. epoll-shim (CMake) --------------------------------------------------
 # Provides <sys/{epoll,timerfd,signalfd,eventfd}.h> over kqueue. macOS is a
 # first-class epoll-shim target (README: tested on macOS 13.7.1).
+echo "==> applying epoll-shim Darwin patches"
+for p in "$HERE"/patches/epoll-shim/*.patch; do
+	[ -e "$p" ] || continue
+	if git -C "$SRC/epoll-shim" apply --reverse --check "$p" 2>/dev/null; then
+		echo "    already applied: $(basename "$p")"
+	else
+		git -C "$SRC/epoll-shim" apply "$p"
+		echo "    applied: $(basename "$p")"
+	fi
+done
+
 echo "==> building epoll-shim"
 cmake -S "$SRC/epoll-shim" -B "$SRC/epoll-shim/build-macos" -G Ninja \
 	-DCMAKE_INSTALL_PREFIX="$PREFIX" \
@@ -72,7 +83,7 @@ echo "    epoll-shim.pc OK: $(pkg-config --cflags epoll-shim)"
 # Apply the Darwin patches (build config + os cloexec/peercred), idempotently:
 # if a patch already reverse-applies cleanly it is present, so skip it.
 echo "==> applying wayland Darwin patches"
-for p in "$HERE"/patches/*.patch; do
+for p in "$HERE"/patches/wayland/*.patch; do
 	if git -C "$SRC/wayland" apply --reverse --check "$p" 2>/dev/null; then
 		echo "    already applied: $(basename "$p")"
 	else

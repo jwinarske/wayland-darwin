@@ -1,0 +1,43 @@
+From fa6bff1d56d4c11ad20727daefd2e2a4f5a32fb6 Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Sat, 18 Jul 2026 11:30:00 -0700
+Subject: [PATCH] timerfd: define struct itimerspec for Darwin consumers
+
+macOS has no struct itimerspec and epoll-shim's internal definition is not
+installed, so external consumers of <sys/timerfd.h> only saw the forward
+declaration and could not use the type by value. Define it in the installed
+header on Apple, guarded out during epoll-shim's own build.
+---
+ include/sys/timerfd.h | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/include/sys/timerfd.h b/include/sys/timerfd.h
+index 504c4bc..0672269 100644
+--- a/include/sys/timerfd.h
++++ b/include/sys/timerfd.h
+@@ -14,7 +14,22 @@ extern "C" {
+ #define TFD_TIMER_ABSTIME 1
+ #define TFD_TIMER_CANCEL_ON_SET (1 << 1)
+ 
++#if defined(__APPLE__) && !defined(COMPAT_ENABLE_ITIMERSPEC)
++/*
++ * macOS has no struct itimerspec (no POSIX per-process timers) and epoll-shim's
++ * own definition (compat_itimerspec.h) is not installed, so consumers of this
++ * installed header would only see the forward declaration below and could not
++ * use the type by value. Define it here for them. During epoll-shim's own
++ * build COMPAT_ENABLE_ITIMERSPEC is set and the internal header provides it, so
++ * this is skipped to avoid a redefinition.
++ */
++struct itimerspec {
++	struct timespec it_interval;
++	struct timespec it_value;
++};
++#else
+ struct itimerspec;
++#endif
+ 
+ int timerfd_create(int, int);
+ int timerfd_settime(int, int, struct itimerspec const *, struct itimerspec *);
+-- 
+2.55.0
+

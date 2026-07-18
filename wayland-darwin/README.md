@@ -35,6 +35,7 @@ Linux-specific pieces are already abstracted and feature-probed. Full audit of
 | peer creds (`ucred`) | `wayland-os.c` | ⚠ the BSD/`SO_PEERCRED` branches don't fit Darwin — patched to add a `LOCAL_PEERCRED` + `LOCAL_PEERPID` branch (patch 0002) |
 | `MSG_NOSIGNAL` send flag | `connection.c` | ⚠ absent on macOS — patched to `#define` it away and suppress `SIGPIPE` per-socket with `SO_NOSIGPIPE` (patch 0002) |
 | `ppoll` | `wayland-client.c` | ⚠ absent on macOS — patched with a `poll(2)`-based fallback (patch 0002) |
+| `struct itimerspec` | `event-loop.c` (via epoll-shim `<sys/timerfd.h>`) | ⚠ macOS `<time.h>` doesn't define it and epoll-shim only forward-declares it in its installed header — patched epoll-shim to define it for consumers (epoll-shim patch 0001) |
 
 epoll-shim covers macOS as a tested target (its README lists macOS 13.7.1). It
 ships all four headers (`sys/{epoll,timerfd,signalfd,eventfd}.h`) and has
@@ -44,10 +45,11 @@ targets (`pipe2`, `socket`, `socketpair`, `itimerspec`, `sem`, `ppoll`).
 
 ## The patches
 
-Two small patches to wayland, verified to apply cleanly to the pinned tree
-(both upstreamable on the existing FreeBSD/OpenBSD precedent):
+Small patches to the pinned trees, verified to apply cleanly and all
+upstreamable — two to wayland (`patches/wayland/`) and one to epoll-shim
+(`patches/epoll-shim/`):
 
-**`patches/0001-wayland-darwin-build-support.patch`** — two edits to the
+**`patches/wayland/0001-wayland-darwin-build-support.patch`** — two edits to the
 top-level `meson.build`:
 
 - Add `'darwin'` to the epoll-shim branch, so macOS pulls the kqueue-backed
@@ -56,7 +58,7 @@ top-level `meson.build`:
   defining it on macOS *hides* the BSD extensions the OS-abstraction layer
   needs (`LOCAL_PEERCRED`, `struct xucred`, `u_int`).
 
-**`patches/0002-os-darwin-cloexec-and-peercred.patch`** — Darwin runtime
+**`patches/wayland/0002-os-darwin-cloexec-and-peercred.patch`** — Darwin runtime
 portability across `wayland-os.{c,h}` and `wayland-client.c`:
 
 - Guard the `SOCK_CLOEXEC` / `MSG_CMSG_CLOEXEC` fast paths with `#ifdef`, so
@@ -69,7 +71,11 @@ portability across `wayland-os.{c,h}` and `wayland-client.c`:
 - `ppoll(2)` doesn't exist on macOS: add a `poll(2)`-based fallback in
   `wl_display_poll` (its only caller always passes `sigmask == NULL`).
 
-epoll-shim itself needs no patch (macOS is an upstream-tested target).
+**`patches/epoll-shim/0001-timerfd-define-itimerspec-on-darwin.patch`** —
+epoll-shim's installed `<sys/timerfd.h>` only forward-declares `struct
+itimerspec` and relies on `<time.h>` to complete it, which macOS does not.
+Define the struct in the installed header on Apple (guarded out during
+epoll-shim's own build, where its internal definition is already in scope).
 
 ## Notes
 
@@ -134,8 +140,9 @@ core library surface in the meantime.
 ## Layout
 
 - `pin.env` — pinned source URLs + commit SHAs (single source of truth).
-- `patches/0001-wayland-darwin-build-support.patch` — the two-edit meson patch.
-- `patches/0002-os-darwin-cloexec-and-peercred.patch` — `wayland-os.c` cloexec + peercred port.
+- `patches/wayland/0001-wayland-darwin-build-support.patch` — the two-edit meson patch.
+- `patches/wayland/0002-os-darwin-cloexec-and-peercred.patch` — `wayland-os.{c,h}` + `wayland-client.c` runtime port.
+- `patches/epoll-shim/0001-timerfd-define-itimerspec-on-darwin.patch` — `struct itimerspec` for consumers.
 - `build-macos.sh` — build + acceptance runbook (self-bootstraps sources).
 - `eventloop-smoke.c` — targeted event-loop smoke over the epoll-shim surface.
 - `roundtrip-smoke.c` — client↔server roundtrip over a real unix socket.
