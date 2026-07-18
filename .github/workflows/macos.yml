@@ -1,0 +1,68 @@
+name: libwayland on macOS
+
+# Builds libwayland on real macOS runners, over epoll-shim, and runs the
+# acceptance test (libwayland's own suite + an event-loop smoke). Covers both
+# architectures: macos-13 (Intel/x86_64) and macos-14 / macos-15 (Apple
+# Silicon/arm64).
+#
+# The job clones the pinned wayland + epoll-shim sources itself (via
+# wayland-darwin/pin.env, honored by build-macos.sh), builds epoll-shim then
+# libwayland with the Darwin patch, and runs the acceptance test.
+
+on:
+  push:
+    paths:
+      - 'wayland-darwin/**'
+      - '.github/workflows/macos.yml'
+  pull_request:
+    paths:
+      - 'wayland-darwin/**'
+      - '.github/workflows/macos.yml'
+  workflow_dispatch:
+
+# One in-flight run per ref; new pushes cancel the old.
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14, macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          uname -m
+          cc --version | head -1
+
+      # brew deps are installed by build-macos.sh, but doing it here as an
+      # explicit step surfaces failures earlier and keeps the build step
+      # focused on the build.
+      - name: Install Homebrew deps
+        run: brew install cmake ninja meson pkgconf libffi expat libxml2
+
+      - name: Build + acceptance test
+        env:
+          PREFIX: ${{ github.workspace }}/prefix
+          SRC: ${{ github.workspace }}/src
+        run: ./wayland-darwin/build-macos.sh
+
+      - name: Upload meson test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: meson-logs-${{ matrix.os }}
+          path: |
+            src/wayland/build-macos/meson-logs/
+          if-no-files-found: ignore

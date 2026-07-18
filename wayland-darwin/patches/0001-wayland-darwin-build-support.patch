@@ -1,0 +1,53 @@
+From 045d719effbed03bc80047ecf4d037cbd19bffb7 Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Sat, 18 Jul 2026 10:00:00 -0700
+Subject: [PATCH] build: enable epoll-shim + relax feature macros on Darwin
+ (macOS)
+
+macOS lacks epoll/timerfd/signalfd/eventfd; libwayland already consumes
+epoll-shim on FreeBSD/OpenBSD. Add 'darwin' to that branch so the same
+kqueue-backed shim is used, and exclude Darwin from the strict
+_POSIX_C_SOURCE definition so the BSD extensions the OS-abstraction layer
+needs (LOCAL_PEERCRED/struct xucred) stay visible.
+---
+ meson.build | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/meson.build b/meson.build
+index 8a82638..b21b08c 100644
+--- a/meson.build
++++ b/meson.build
+@@ -20,7 +20,12 @@ config_h.set_quoted('PACKAGE', meson.project_name())
+ config_h.set_quoted('PACKAGE_VERSION', meson.project_version())
+ 
+ cc_args = []
+-if host_machine.system() not in ['freebsd', 'openbsd']
++# BSDs and Darwin expose the POSIX.1-2008 functions wayland needs (strndup,
++# clock_gettime, ...) under their default feature set. Defining the strict
++# _POSIX_C_SOURCE=200809L on those platforms instead HIDES the non-POSIX BSD
++# extensions the OS-abstraction layer relies on (LOCAL_PEERCRED / struct
++# xucred on Darwin, SO_PEERCRED variants, u_int types), so exclude them.
++if host_machine.system() not in ['freebsd', 'openbsd', 'darwin']
+ 	cc_args += ['-D_POSIX_C_SOURCE=200809L']
+ endif
+ add_project_arguments(cc_args, language: 'c')
+@@ -74,9 +79,13 @@ endif
+ config_h.set10('HAVE_BROKEN_MSG_CMSG_CLOEXEC', have_broken_msg_cmsg_cloexec)
+ 
+ if get_option('libraries')
+-	if host_machine.system() in ['freebsd', 'openbsd']
+-		# When building for FreeBSD, epoll(7) is provided by a userspace
+-		# wrapper around kqueue(2).
++	if host_machine.system() in ['freebsd', 'openbsd', 'darwin']
++		# On the BSDs and Darwin (macOS), epoll(7)/timerfd/signalfd/eventfd
++		# are provided by epoll-shim, a userspace wrapper around kqueue(2).
++		# Its pkg-config Cflags redefine read/write/close as macros routed
++		# through the shim (matching the FreeBSD port); the event loop and
++		# eventfd usage are already localized to single TUs, so macro mode
++		# is safe here.
+ 		epoll_dep = dependency('epoll-shim')
+ 	else
+ 		# Otherwise, assume that epoll(7) is supported natively.
+-- 
+2.55.0
+

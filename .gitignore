@@ -1,0 +1,9 @@
+# Upstream sources are fetched at pinned revisions (see wayland-darwin/pin.env),
+# not vendored into this repo.
+/src/
+
+# Local install prefix and build trees.
+/prefix/
+build/
+build-*/
+**/build-macos/
