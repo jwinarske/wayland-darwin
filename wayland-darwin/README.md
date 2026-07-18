@@ -98,13 +98,22 @@ epoll-shim itself needs no patch (macOS is an upstream-tested target).
 Considered passing on macOS when all of:
 
 1. epoll-shim builds + installs; `pkg-config --exists epoll-shim` succeeds.
-2. libwayland (with the patch) configures — the meson `SFD_CLOEXEC` /
+2. libwayland (with the patches) configures — the meson `SFD_CLOEXEC` /
    `TFD_CLOEXEC` / `CLOCK_MONOTONIC` probes resolve through epoll-shim — and
-   `meson compile` + `meson install` succeed.
-3. `meson test` (libwayland's own suite: connection, event loop, socket /
-   `SCM_RIGHTS` fd passing, display roundtrip) passes.
-4. `eventloop-smoke` prints `PASS` — fd(epoll) + timer(timerfd) +
-   signal(signalfd) + idle all fire in one dispatch cycle.
+   `meson compile` + `meson install` build the client, server, cursor, and
+   scanner libraries.
+3. `eventloop-smoke` prints `PASS` — fd(epoll) + timer(timerfd) +
+   signal(signalfd) + idle all fire in one `wl_event_loop` dispatch cycle.
+4. `roundtrip-smoke` prints `PASS` — a forked client connects to a server over
+   a real unix socket and completes a `wl_display_roundtrip`, exercising the
+   accept/cloexec path and the wire protocol end to end.
+
+**Not covered yet:** libwayland's own `meson test` suite. Its harness registers
+tests via an ELF-only `section()` + `__start/__stop` iteration that Mach-O does
+not support, and the tests assume Linux (`/proc/self/fd`, signalfd/timerfd
+semantics). Porting the harness (Mach-O `section$start$…` bounds) and auditing
+the individual tests is separate follow-up work; the smokes above cover the
+core library surface in the meantime.
 
 ## Building
 
@@ -122,4 +131,5 @@ Considered passing on macOS when all of:
 - `patches/0002-os-darwin-cloexec-and-peercred.patch` — `wayland-os.c` cloexec + peercred port.
 - `build-macos.sh` — build + acceptance runbook (self-bootstraps sources).
 - `eventloop-smoke.c` — targeted event-loop smoke over the epoll-shim surface.
+- `roundtrip-smoke.c` — client↔server roundtrip over a real unix socket.
 - `../.github/workflows/macos.yml` — the CI workflow.
