@@ -37,4 +37,29 @@ void darwin_cocoa_window_present(darwin_cocoa_window *win, const void *data,
 
 void darwin_cocoa_window_destroy(darwin_cocoa_window *win);
 
+/* ---- IOSurface (zero-copy software path) ---------------------------------- */
+
+/* Opaque wrapper around an IOSurfaceRef. */
+typedef struct darwin_iosurface darwin_iosurface;
+
+/*
+ * Create an IOSurface for a DRM fourcc (LINEAR BGRA/XRGB only for now).
+ * Returns NULL on failure; *out_stride receives the actual bytes-per-row.
+ */
+darwin_iosurface *darwin_iosurface_create(uint32_t width, uint32_t height,
+	uint32_t drm_format, uint32_t *out_stride);
+
+/* CPU access: lock returns the base address; pair each lock with an unlock. */
+void *darwin_iosurface_lock(darwin_iosurface *surface, bool write);
+void darwin_iosurface_unlock(darwin_iosurface *surface, bool write);
+void darwin_iosurface_destroy(darwin_iosurface *surface);
+
+/*
+ * Zero-copy present: assign the IOSurface directly to the window's
+ * CALayer.contents (no copy). The compositor renders into IOSurface memory via
+ * the allocator, so this just hands the surface to the layer.
+ */
+void darwin_cocoa_window_present_iosurface(darwin_cocoa_window *win,
+	darwin_iosurface *surface);
+
 #endif

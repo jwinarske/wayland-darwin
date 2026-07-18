@@ -23,13 +23,15 @@ frameworks = [
 	'-framework', 'QuartzCore',
 	'-framework', 'CoreVideo',
 	'-framework', 'CoreGraphics',
+	'-framework', 'CoreFoundation',
+	'-framework', 'IOSurface',
 	'-framework', 'Foundation',
 ]
 
 inc = include_directories('include', 'src')
 
 lib_wlr_darwin = library('wlr-darwin',
-	['src/backend.c', 'src/output.c', 'src/cocoa.m'],
+	['src/backend.c', 'src/output.c', 'src/allocator.c', 'src/cocoa.m'],
 	include_directories: inc,
 	dependencies: [wlroots, wayland_server],
 	link_args: frameworks,

@@ -50,4 +50,7 @@ struct wlr_output *darwin_add_output(struct wlr_darwin_backend *backend,
 
 extern const struct wlr_output_impl darwin_output_impl;
 
+/* allocator.c: returns the IOSurface if `buffer` is one of ours, else NULL. */
+darwin_iosurface *darwin_buffer_get_iosurface(struct wlr_buffer *buffer);
+
 #endif

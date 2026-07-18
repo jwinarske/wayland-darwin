@@ -13,7 +13,9 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <CoreVideo/CoreVideo.h>
+#import <IOSurface/IOSurface.h>
 
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "cocoa.h"
@@ -138,6 +140,92 @@ void darwin_cocoa_window_destroy(darwin_cocoa_window *handle) {
 			CVDisplayLinkRelease(win->displayLink);
 		}
 		[win->window close];
+	});
+}
+
+/* ---- IOSurface -------------------------------------------------------------
+ *
+ * IOSurface is a C API; kept here so all Apple-framework code stays in one TU.
+ */
+
+struct darwin_iosurface {
+	IOSurfaceRef ref;
+};
+
+static uint32_t drm_to_iosurface_pixel_format(uint32_t drm_format) {
+	switch (drm_format) {
+	case DARWIN_DRM_FORMAT_XRGB8888:
+	case DARWIN_DRM_FORMAT_ARGB8888:
+		/* DRM XR24/AR24 are little-endian BGRA in memory. */
+		return 'BGRA';
+	default:
+		return 0;
+	}
+}
+
+darwin_iosurface *darwin_iosurface_create(uint32_t width, uint32_t height,
+		uint32_t drm_format, uint32_t *out_stride) {
+	uint32_t pixel_format = drm_to_iosurface_pixel_format(drm_format);
+	if (pixel_format == 0) {
+		return NULL;
+	}
+
+	size_t bytes_per_row =
+		IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, (size_t)width * 4);
+	NSDictionary *props = @{
+		(__bridge NSString *)kIOSurfaceWidth: @(width),
+		(__bridge NSString *)kIOSurfaceHeight: @(height),
+		(__bridge NSString *)kIOSurfaceBytesPerElement: @(4),
+		(__bridge NSString *)kIOSurfaceBytesPerRow: @(bytes_per_row),
+		(__bridge NSString *)kIOSurfacePixelFormat: @(pixel_format),
+	};
+
+	IOSurfaceRef ref = IOSurfaceCreate((__bridge CFDictionaryRef)props);
+	if (ref == NULL) {
+		return NULL;
+	}
+
+	struct darwin_iosurface *surface = calloc(1, sizeof(*surface));
+	if (surface == NULL) {
+		CFRelease(ref);
+		return NULL;
+	}
+	surface->ref = ref;
+	if (out_stride != NULL) {
+		*out_stride = (uint32_t)IOSurfaceGetBytesPerRow(ref);
+	}
+	return surface;
+}
+
+void *darwin_iosurface_lock(darwin_iosurface *surface, bool write) {
+	IOSurfaceLockOptions opts = write ? 0 : kIOSurfaceLockReadOnly;
+	if (IOSurfaceLock(surface->ref, opts, NULL) != kIOReturnSuccess) {
+		return NULL;
+	}
+	return IOSurfaceGetBaseAddress(surface->ref);
+}
+
+void darwin_iosurface_unlock(darwin_iosurface *surface, bool write) {
+	IOSurfaceLockOptions opts = write ? 0 : kIOSurfaceLockReadOnly;
+	IOSurfaceUnlock(surface->ref, opts, NULL);
+}
+
+void darwin_iosurface_destroy(darwin_iosurface *surface) {
+	if (surface == NULL) {
+		return;
+	}
+	CFRelease(surface->ref);
+	free(surface);
+}
+
+void darwin_cocoa_window_present_iosurface(darwin_cocoa_window *handle,
+		darwin_iosurface *surface) {
+	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)handle;
+	IOSurfaceRef ref = surface->ref;
+	CFRetain(ref); /* hold across the async hand-off */
+	dispatch_async(dispatch_get_main_queue(), ^{
+		win->layer.contents = (__bridge id)ref;
+		CFRelease(ref);
 	});
 }
 

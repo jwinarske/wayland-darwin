@@ -45,19 +45,27 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 | `src/darwin.h` | C | internal backend/output structs |
 | `src/backend.c` | C | `wlr_backend_impl` (start/destroy) + the input-bridge socketpair |
 | `src/output.c` | C | `wlr_output_impl` (test/commit/destroy) + present + frame clock |
+| `src/allocator.c` | C | IOSurface allocator: `wlr_allocator_interface` + `wlr_buffer_impl` |
 | `src/cocoa.h` | C | the C↔ObjC boundary |
-| `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer lifecycle, present, CVDisplayLink |
+| `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer lifecycle, IOSurface, present, CVDisplayLink |
 | `example/darwin-smoke.c` | C | minimal compositor: opens a window, renders a colour each frame |
 
 All Objective-C is confined to `cocoa.m` behind the `cocoa.h` C boundary.
 
 ## Presenting
 
-Output commit currently does a **software present**: it maps the committed
-buffer (`wlr_buffer_begin_data_ptr_access`), wraps the pixels in a `CGImage`,
-and assigns it to the window's `CALayer.contents`. This is the MVP path; the
-IOSurface allocator will make it zero-copy (assign an IOSurface-backed image
-directly), and a Metal renderer is the accelerated path after that.
+Two paths, chosen per buffer at commit:
+
+- **Zero-copy (`wlr_darwin_allocator_create`)** — the IOSurface allocator hands
+  the pixman renderer IOSurface-backed buffers; the renderer draws straight into
+  IOSurface memory (`IOSurfaceLock` ↔ `begin/end_data_ptr_access`), and commit
+  assigns the same IOSurface directly to the window's `CALayer.contents`. No copy.
+- **Copy fallback** — foreign buffers (e.g. a plain shm allocator, so
+  `wlr_allocator_autocreate` keeps working) are wrapped in a `CGImage` and
+  copied to the layer.
+
+A Metal renderer is the accelerated path after this (IOSurface is the shared
+currency: `MTLTexture` from the same IOSurface).
 
 ## Build
 
@@ -72,6 +80,6 @@ To see a window, run the installed `darwin-smoke` from a normal login session
 
 - Input: serialize NSEvents (keyboard kVK→evdev, pointer, precise scroll) over
   the main→compositor fd and translate to `wlr_keyboard`/`wlr_pointer` events.
-- IOSurface allocator for zero-copy present; then a Metal renderer.
+- A Metal renderer (accelerated path) sampling the same IOSurfaces.
 - Window resize → `wlr_output_send_request_state`; multi-output; `backingScaleFactor`.
 - tinywl on the Darwin backend.

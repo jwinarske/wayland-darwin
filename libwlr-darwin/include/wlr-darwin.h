@@ -46,7 +46,16 @@ struct wlr_backend *wlr_darwin_backend_create(struct wl_event_loop *loop);
 struct wlr_output *wlr_darwin_add_output(struct wlr_backend *backend,
 	unsigned int width, unsigned int height);
 
+/**
+ * Create the IOSurface allocator. Buffers it produces are IOSurface-backed and
+ * present zero-copy on a Darwin output (assigned directly to CALayer.contents).
+ * Pass it to wlr_output_init_render(); the pixman renderer draws straight into
+ * IOSurface memory. Caps: WLR_BUFFER_CAP_DATA_PTR.
+ */
+struct wlr_allocator *wlr_darwin_allocator_create(void);
+
 bool wlr_backend_is_darwin(const struct wlr_backend *backend);
 bool wlr_output_is_darwin(const struct wlr_output *output);
+bool wlr_buffer_is_darwin(const struct wlr_buffer *buffer);
 
 #endif

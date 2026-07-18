@@ -83,7 +83,8 @@ static int compositor_main(void *data) {
 
 	demo.backend = wlr_darwin_backend_create(loop);
 	demo.renderer = wlr_pixman_renderer_create();
-	demo.allocator = wlr_allocator_autocreate(demo.backend, demo.renderer);
+	/* IOSurface allocator → zero-copy present into the CALayer. */
+	demo.allocator = wlr_darwin_allocator_create();
 
 	demo.new_output.notify = handle_new_output;
 	wl_signal_add(&demo.backend->events.new_output, &demo.new_output);

@@ -42,9 +42,16 @@ static bool output_test(struct wlr_output *wlr_output,
 	return true;
 }
 
-/* Software present: hand the mapped pixels to the CALayer (main thread). */
 static void output_present_buffer(struct wlr_darwin_output *output,
 		struct wlr_buffer *buffer) {
+	/* Zero-copy: our own IOSurface buffer goes straight to the CALayer. */
+	darwin_iosurface *surface = darwin_buffer_get_iosurface(buffer);
+	if (surface != NULL) {
+		darwin_cocoa_window_present_iosurface(output->window, surface);
+		return;
+	}
+
+	/* Copy fallback for foreign buffers (e.g. the plain shm allocator). */
 	void *data;
 	uint32_t format;
 	size_t stride;
