@@ -1,0 +1,73 @@
+From 9bd5ebfffc95224307d75e15227a2b81dab78942 Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Sat, 18 Jul 2026 11:00:00 -0700
+Subject: [PATCH] os: support Darwin (macOS) cloexec and peer credentials
+
+macOS lacks SOCK_CLOEXEC and MSG_CMSG_CLOEXEC (unlike the BSDs, which
+have them natively) and reads peer credentials differently. Guard the
+SOCK_CLOEXEC and MSG_CMSG_CLOEXEC fast paths so Darwin falls through to
+the portable fcntl(FD_CLOEXEC) fallbacks already used for EPOLL_CLOEXEC
+and accept4, and add a peercred branch using LOCAL_PEERCRED (struct
+xucred) plus LOCAL_PEERPID for the pid.
+---
+ src/wayland-os.c | 25 ++++++++++++++++++++++++-
+ 1 file changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/wayland-os.c b/src/wayland-os.c
+index f00ead4..268babc 100644
+--- a/src/wayland-os.c
++++ b/src/wayland-os.c
+@@ -75,11 +75,13 @@ wl_os_socket_cloexec(int domain, int type, int protocol)
+ {
+ 	int fd;
+ 
++#ifdef SOCK_CLOEXEC
+ 	fd = wl_socket(domain, type | SOCK_CLOEXEC, protocol);
+ 	if (fd >= 0)
+ 		return fd;
+ 	if (errno != EINVAL)
+ 		return -1;
++#endif
+ 
+ 	fd = wl_socket(domain, type, protocol);
+ 	return set_cloexec_or_close(fd);
+@@ -125,6 +127,27 @@ wl_os_socket_peercred(int sockfd, uid_t *uid, gid_t *gid, pid_t *pid)
+ 	*pid = ucred.pid;
+ 	return 0;
+ }
++#elif defined(__APPLE__)
++int
++wl_os_socket_peercred(int sockfd, uid_t *uid, gid_t *gid, pid_t *pid)
++{
++	struct xucred ucred;
++	socklen_t len = sizeof(ucred);
++	pid_t peerpid;
++	socklen_t peerpid_len = sizeof(peerpid);
++
++	if (getsockopt(sockfd, SOL_LOCAL, LOCAL_PEERCRED, &ucred, &len) < 0 ||
++	    ucred.cr_version != XUCRED_VERSION)
++		return -1;
++	*uid = ucred.cr_uid;
++	*gid = ucred.cr_ngroups > 0 ? ucred.cr_groups[0] : (gid_t)-1;
++	/* struct xucred carries no pid on Darwin; LOCAL_PEERPID is separate. */
++	if (getsockopt(sockfd, SOL_LOCAL, LOCAL_PEERPID, &peerpid, &peerpid_len) == 0)
++		*pid = peerpid;
++	else
++		*pid = 0;
++	return 0;
++}
+ #else
+ #error "Don't know how to read ucred on this platform"
+ #endif
+@@ -186,7 +209,7 @@ wl_os_recvmsg_cloexec(int sockfd, struct msghdr *msg, int flags)
+ 	 * fix (https://cgit.freebsd.org/src/commit/?id=6ceacebdf52211).
+ 	 */
+ #pragma message("Using fallback directly since MSG_CMSG_CLOEXEC is broken.")
+-#else
++#elif defined(MSG_CMSG_CLOEXEC)
+ 	ssize_t len;
+ 
+ 	len = wl_recvmsg(sockfd, msg, flags | MSG_CMSG_CLOEXEC);
+-- 
+2.55.0
+

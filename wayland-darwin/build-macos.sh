@@ -69,13 +69,17 @@ fi
 echo "    epoll-shim.pc OK: $(pkg-config --cflags epoll-shim)"
 
 # ---- 2. libwayland (meson) --------------------------------------------------
-# Apply the Darwin build-support patch (adds 'darwin' to the epoll-shim branch
-# and relaxes _POSIX_C_SOURCE) if not already applied.
-echo "==> applying wayland Darwin patch (idempotent)"
-if ! grep -q "'openbsd', 'darwin'" "$SRC/wayland/meson.build"; then
-	git -C "$SRC/wayland" apply --3way \
-		"$HERE/patches/0001-wayland-darwin-build-support.patch"
-fi
+# Apply the Darwin patches (build config + os cloexec/peercred), idempotently:
+# if a patch already reverse-applies cleanly it is present, so skip it.
+echo "==> applying wayland Darwin patches"
+for p in "$HERE"/patches/*.patch; do
+	if git -C "$SRC/wayland" apply --reverse --check "$p" 2>/dev/null; then
+		echo "    already applied: $(basename "$p")"
+	else
+		git -C "$SRC/wayland" apply "$p"
+		echo "    applied: $(basename "$p")"
+	fi
+done
 
 echo "==> building libwayland"
 # libraries=true needs epoll-shim; we skip docs. Keep tests ON for acceptance.

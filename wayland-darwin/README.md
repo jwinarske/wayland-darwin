@@ -31,8 +31,8 @@ Linux-specific pieces are already abstracted and feature-probed. Full audit of
 | `timerfd_*`, `signalfd` | `event-loop.c` | ✅ epoll-shim headers; probed in meson |
 | `eventfd` | `wayland-server.c` | ✅ epoll-shim provides `<sys/eventfd.h>` on macOS (not native) |
 | `memfd_create`, `mkostemp`, `posix_fallocate`, `accept4`, `mremap`, `prctl`, `gettid` | various | ✅ each `HAVE_*`-probed with fallbacks |
-| peer creds (`SO_PEERCRED` / `ucred`) | `wayland-os.c` | ✅ `LOCAL_PEERCRED` / `struct xucred` branch already present |
-| `MSG_CMSG_CLOEXEC`, `SOCK_CLOEXEC` fallbacks | `wayland-os.c` / `.h` | ✅ portable fallbacks already present |
+| `SOCK_CLOEXEC`, `MSG_CMSG_CLOEXEC` | `wayland-os.c` | ⚠ present natively on the BSDs but **not on macOS** — patched to fall through to the `fcntl(FD_CLOEXEC)` fallback (patch 0002) |
+| peer creds (`ucred`) | `wayland-os.c` | ⚠ the BSD/`SO_PEERCRED` branches don't fit Darwin — patched to add a `LOCAL_PEERCRED` + `LOCAL_PEERPID` branch (patch 0002) |
 
 epoll-shim covers macOS as a tested target (its README lists macOS 13.7.1). It
 ships all four headers (`sys/{epoll,timerfd,signalfd,eventfd}.h`) and has
@@ -40,10 +40,13 @@ ships all four headers (`sys/{epoll,timerfd,signalfd,eventfd}.h`) and has
 `signalfd_ctx.c`, `compat_sigops.c`, `compat_kqueue1.c`) plus Apple compat
 targets (`pipe2`, `socket`, `socketpair`, `itimerspec`, `sem`, `ppoll`).
 
-## The build patch
+## The patches
 
-`patches/0001-wayland-darwin-build-support.patch` is two edits to wayland's
-top-level `meson.build`, verified to apply cleanly to the pinned tree:
+Two small patches to wayland, verified to apply cleanly to the pinned tree
+(both upstreamable on the existing FreeBSD/OpenBSD precedent):
+
+**`patches/0001-wayland-darwin-build-support.patch`** — two edits to the
+top-level `meson.build`:
 
 - Add `'darwin'` to the epoll-shim branch, so macOS pulls the kqueue-backed
   shim instead of assuming native epoll.
@@ -51,7 +54,13 @@ top-level `meson.build`, verified to apply cleanly to the pinned tree:
   defining it on macOS *hides* the BSD extensions the OS-abstraction layer
   needs (`LOCAL_PEERCRED`, `struct xucred`, `u_int`).
 
-Both are upstreamable on the existing FreeBSD/OpenBSD precedent.
+**`patches/0002-os-darwin-cloexec-and-peercred.patch`** — `src/wayland-os.c`:
+
+- Guard the `SOCK_CLOEXEC` / `MSG_CMSG_CLOEXEC` fast paths with `#ifdef`, so
+  Darwin (which has neither, unlike the BSDs) falls through to the portable
+  `fcntl(FD_CLOEXEC)` fallbacks already used for `EPOLL_CLOEXEC` / `accept4`.
+- Add a Darwin peer-credentials branch using `LOCAL_PEERCRED` (`struct
+  xucred`) for uid/gid and `LOCAL_PEERPID` for the pid.
 
 epoll-shim itself needs no patch (macOS is an upstream-tested target).
 
@@ -73,9 +82,9 @@ epoll-shim itself needs no patch (macOS is an upstream-tested target).
 
 ## Known limitations on macOS
 
-- **Client peer PID unavailable.** macOS `struct xucred` has no `cr_pid`, so
-  `wl_client_get_credentials()` returns pid = -1 unless a `LOCAL_PEERPID` path
-  is added. Fine for most compositors; note it if you key on client pid.
+- **Client peer gid is the primary group only.** macOS `struct xucred` carries
+  a group list rather than a single gid, so the peercred branch reports
+  `cr_groups[0]`. uid and pid (via `LOCAL_PEERPID`) are exact.
 - **`epoll-shim.pc` hardcodes `Libs.private: -pthread -lrt`.** There is no
   `-lrt` on macOS. It is only consulted for `--static`, so it is harmless for
   the default shared build; patch the `.pc` (drop `-lrt` on Apple) if you ever
@@ -110,6 +119,7 @@ Considered passing on macOS when all of:
 
 - `pin.env` — pinned source URLs + commit SHAs (single source of truth).
 - `patches/0001-wayland-darwin-build-support.patch` — the two-edit meson patch.
+- `patches/0002-os-darwin-cloexec-and-peercred.patch` — `wayland-os.c` cloexec + peercred port.
 - `build-macos.sh` — build + acceptance runbook (self-bootstraps sources).
 - `eventloop-smoke.c` — targeted event-loop smoke over the epoll-shim surface.
 - `../.github/workflows/macos.yml` — the CI workflow.
