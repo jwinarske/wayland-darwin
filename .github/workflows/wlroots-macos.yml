@@ -2,7 +2,8 @@ name: wlroots on macOS
 
 # Builds wlroots core on real macOS runners against the wayland-darwin
 # libwayland plus the libdrm-compat shim, all Linux-graphics backends off.
-# Covers Intel (macos-13) and Apple Silicon (macos-14 / macos-15).
+# GitHub-hosted macOS runners are all Apple Silicon (arm64); the Intel
+# macos-13 free runners are retired and queue indefinitely, so are omitted.
 
 on:
   push:
@@ -37,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14, macos-15]
+        os: [macos-14, macos-15]
     steps:
       - name: Checkout
         uses: actions/checkout@v5

@@ -134,8 +134,8 @@ core library surface in the meantime.
   sources into `../src` if absent, installs Homebrew deps, builds, runs the
   acceptance test).
 - **Via CI (no Mac needed):** the `libwayland on macOS` GitHub Actions workflow
-  runs the same on `macos-13` (Intel) + `macos-14` / `macos-15` (Apple
-  Silicon). Trigger it by pushing, or manually via *workflow_dispatch*.
+  runs the same on `macos-14` / `macos-15` (Apple Silicon — all GitHub-hosted
+  macOS runners are arm64). Trigger it by pushing, or via *workflow_dispatch*.
 
 ## Layout
 
