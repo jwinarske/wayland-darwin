@@ -374,6 +374,10 @@ void darwin_iosurface_destroy(darwin_iosurface *surface) {
 	free(surface);
 }
 
+void *darwin_iosurface_ref(darwin_iosurface *surface) {
+	return surface != NULL ? (void *)surface->ref : NULL;
+}
+
 void darwin_cocoa_window_present_iosurface(darwin_cocoa_window *handle,
 		darwin_iosurface *surface) {
 	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)handle;

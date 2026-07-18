@@ -54,6 +54,9 @@ void *darwin_iosurface_lock(darwin_iosurface *surface, bool write);
 void darwin_iosurface_unlock(darwin_iosurface *surface, bool write);
 void darwin_iosurface_destroy(darwin_iosurface *surface);
 
+/* The underlying IOSurfaceRef (as an opaque pointer), for the Metal renderer. */
+void *darwin_iosurface_ref(darwin_iosurface *surface);
+
 /*
  * Zero-copy present: assign the IOSurface directly to the window's
  * CALayer.contents (no copy). The compositor renders into IOSurface memory via

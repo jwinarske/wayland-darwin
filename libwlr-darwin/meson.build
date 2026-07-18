@@ -25,6 +25,7 @@ frameworks = [
 	'-framework', 'CoreGraphics',
 	'-framework', 'CoreFoundation',
 	'-framework', 'IOSurface',
+	'-framework', 'Metal',
 	'-framework', 'Foundation',
 ]
 
@@ -33,7 +34,10 @@ frameworks = [
 inc = include_directories('include', 'src', '../wlroots-darwin/compat')
 
 lib_wlr_darwin = library('wlr-darwin',
-	['src/backend.c', 'src/output.c', 'src/allocator.c', 'src/keymap.c', 'src/cocoa.m'],
+	[
+		'src/backend.c', 'src/output.c', 'src/allocator.c', 'src/keymap.c',
+		'src/renderer.c', 'src/cocoa.m', 'src/metal.m',
+	],
 	include_directories: inc,
 	dependencies: [wlroots, wayland_server],
 	link_args: frameworks,
@@ -50,6 +54,11 @@ wlr_darwin = declare_dependency(
 
 if get_option('examples')
 	executable('darwin-smoke', 'example/darwin-smoke.c',
+		dependencies: [wlr_darwin],
+		link_args: frameworks,
+	)
+	# Headless — CI runs this to verify the Metal renderer actually renders.
+	executable('metal-smoke', 'example/metal-smoke.c',
 		dependencies: [wlr_darwin],
 		link_args: frameworks,
 	)

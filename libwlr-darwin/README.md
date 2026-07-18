@@ -48,7 +48,9 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 | `src/allocator.c` | C | IOSurface allocator: `wlr_allocator_interface` + `wlr_buffer_impl` |
 | `src/keymap.c` | C | kVK → evdev key-code table (the single maintained pivot) |
 | `src/input.h` | C | main→compositor input wire format |
-| `src/cocoa.h` | C | the C↔ObjC boundary |
+| `src/renderer.c` | C | Metal renderer: `wlr_renderer_impl` + `wlr_render_pass_impl` + format negotiation |
+| `src/metal.m` | ObjC (ARC) | Metal device/pipeline, IOSurface render target, solid-rect pass, readback |
+| `src/cocoa.h` / `src/metal.h` | C | the C↔ObjC boundaries |
 | `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer, IOSurface, present, CVDisplayLink, NSEvent capture |
 | `example/darwin-smoke.c` | C | minimal compositor: opens a window, renders a colour each frame |
 | `example/tinywl.c` | C | wlroots' reference compositor, adapted to the Darwin backend (runs real clients) |
@@ -98,8 +100,20 @@ the main→compositor fd; the backend decodes them into `wlr_keyboard` /
 - NSTouch/gestures are not yet surfaced (indirect touch must **not** become
   `wlr_touch`); pointer-gesture mapping is a later addition.
 
+## Metal renderer (accelerated path)
+
+`wlr_darwin_metal_renderer_create()` renders directly into the allocator's
+IOSurfaces via Metal (`newTextureWithDescriptor:iosurface:`) — no copy, same
+IOSurface currency as the software path. LINEAR-only (DRM XRGB8888/ARGB8888 ↔
+`MTLPixelFormatBGRA8Unorm`). Metal render-to-texture is headless-capable, so this
+is the one Darwin piece CI can **run**: `metal-smoke` renders a red rect into an
+IOSurface and reads it back.
+
+Increment 1 (here) does solid-colour rects; sampling client surfaces
+(`add_texture` / `texture_from_buffer`) is the next increment, so `darwin-tinywl`
+still uses pixman until then.
+
 ## Next
 
-- A Metal renderer (accelerated path) sampling the same IOSurfaces.
+- Metal `add_texture` / `texture_from_buffer` (composite real client surfaces).
 - Window resize → `wlr_output_send_request_state`; multi-output; `backingScaleFactor`.
-- tinywl on the Darwin backend.

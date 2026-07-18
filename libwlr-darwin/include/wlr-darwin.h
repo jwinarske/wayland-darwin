@@ -54,6 +54,13 @@ struct wlr_output *wlr_darwin_add_output(struct wlr_backend *backend,
  */
 struct wlr_allocator *wlr_darwin_allocator_create(void);
 
+/**
+ * Create the Metal renderer (the accelerated path). Renders into IOSurface
+ * buffers (pair with wlr_darwin_allocator_create), so the render target is the
+ * buffer the backend presents — no copy. Returns NULL if Metal is unavailable.
+ */
+struct wlr_renderer *wlr_darwin_metal_renderer_create(void);
+
 bool wlr_backend_is_darwin(const struct wlr_backend *backend);
 bool wlr_output_is_darwin(const struct wlr_output *output);
 bool wlr_buffer_is_darwin(const struct wlr_buffer *buffer);

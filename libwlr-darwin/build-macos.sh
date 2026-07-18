@@ -40,8 +40,14 @@ fi
 meson compile -C "$LWD_BUILD" -j "$JOBS"
 meson install -C "$LWD_BUILD"
 
+# ---- 3. runtime smoke: Metal renderer (headless) ---------------------------
+# Metal render-to-texture works without a display, so unlike the windowed demos
+# CI can actually run this: render red into an IOSurface and read it back.
+echo "==> runtime smoke: Metal renderer (headless)"
+DYLD_LIBRARY_PATH="$PREFIX/lib" "$LWD_BUILD/metal-smoke"
+
 echo
 echo "==================================================================="
-echo " PASS — libwlr-darwin (Cocoa backend) compiles + links on macOS"
-echo "        (darwin-smoke built; run it in a login session to see a window)"
+echo " PASS — libwlr-darwin (Cocoa backend + Metal renderer) on macOS"
+echo "        (darwin-smoke / darwin-tinywl need a login session to show a window)"
 echo "==================================================================="
