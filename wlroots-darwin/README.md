@@ -81,17 +81,24 @@ full referenced set regardless, to guarantee a one-shot link.
 
 - [x] Source audit against `d64acff`; all core blockers identified.
 - [x] Configure matrix determined.
-- [x] librt fix (`patches/wlroots/0001-librt-optional.patch`, verified to apply).
-- [x] Confirmed libdrm headers vendor cleanly on Darwin (BSD branch).
-- [x] `drm*` symbol surface enumerated; format functions located for porting.
-- [ ] libdrm-compat shim: vendor headers, port format fns, write stubs, `.pc`, build.
-- [ ] `_POSIX_C_SOURCE` + `--version-script` + input-event-codes patches.
-- [ ] `build-macos.sh` (consume wayland-darwin PREFIX + shim; configure matrix) + CI.
+- [x] wlroots patches (`patches/wlroots/`): librt optional + Darwin meson fixes
+  (`_POSIX_C_SOURCE`, `--version-script`), both verified to apply in sequence.
+- [x] libdrm-compat shim: `format.c` (real functions, compile+run-verified on
+  Linux against the pinned headers) + `stubs.c` (full `drm*` surface, signatures
+  verified against the vendored headers). Headers/`.pc`/dylib built by the runbook.
+- [x] Vendored FreeBSD `input-event-codes.h` (provided via `-Icompat`, no patch needed).
+- [x] `build-macos.sh` (delegates to wayland-darwin for libwayland, builds the
+  shim + wayland-protocols, configures wlroots with the matrix) + CI workflow.
+- [ ] **Green on a macOS runner** — the build has not yet run on Darwin; expect
+  the same fix-forward iteration wayland-darwin went through (werror is off, but
+  clang/macOS specifics may surface; the linker will name any missing stub).
 
 ## Layout
 
-- `pin.env` — pinned wlroots + libdrm revisions.
-- `patches/wlroots/` — minimal upstreamable wlroots patches (librt fixed; more pending).
-- `patches/libdrm-compat/` — (reserved) any patches to vendored headers.
-- `libdrm-compat/` — (in progress) the shim: vendored headers + format fns + stubs + `.pc`.
-- `compat/` — (pending) vendored `input-event-codes.h`.
+- `pin.env` — pinned wlroots + libdrm + wayland-protocols revisions.
+- `patches/wlroots/` — minimal upstreamable wlroots patches (librt, meson Darwin fixes).
+- `libdrm-compat/format.c` — real `drmGetFormatName` / modifier helpers.
+- `libdrm-compat/stubs.c` — behavioral stubs for the rest of the linked `drm*` surface.
+- `compat/linux/input-event-codes.h` — vendored FreeBSD BSD-2-Clause header.
+- `build-macos.sh` — full build runbook (self-bootstrapping via `pin.env`).
+- `../.github/workflows/wlroots-macos.yml` — the CI workflow.

@@ -1,0 +1,72 @@
+From 62a1d3bfe52d9a02af9933f14a2bf6e0cec38dcd Mon Sep 17 00:00:00 2001
+From: Joel Winarske <joel.winarske@linux.com>
+Date: Sat, 18 Jul 2026 12:30:00 -0700
+Subject: [PATCH] build: Darwin meson fixes (_POSIX_C_SOURCE, version-script)
+
+Two macOS build issues in the top-level meson.build:
+- -D_POSIX_C_SOURCE=200809L is added unconditionally; on Darwin that hides
+  the BSD extensions wlroots and its deps use, so make it non-Darwin only.
+- the library links with -Wl,--version-script, which macOS ld64 does not
+  support; skip the symbol-visibility script on Darwin (all symbols
+  exported, acceptable for this build).
+---
+ meson.build | 26 ++++++++++++++++++++------
+ 1 file changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/meson.build b/meson.build
+index 90200d4..fb267bd 100644
+--- a/meson.build
++++ b/meson.build
+@@ -20,13 +20,19 @@ versioned_name = '@0@-@1@.@2@'.format(meson.project_name(), version_major, versi
+ little_endian = target_machine.endian() == 'little'
+ big_endian = target_machine.endian() == 'big'
+ 
+-add_project_arguments([
+-	'-D_POSIX_C_SOURCE=200809L',
++project_c_args = [
+ 	'-DWLR_USE_UNSTABLE',
+ 	'-DWLR_PRIVATE=',
+ 	'-DWLR_LITTLE_ENDIAN=@0@'.format(little_endian.to_int()),
+ 	'-DWLR_BIG_ENDIAN=@0@'.format(big_endian.to_int()),
+-], language: 'c')
++]
++# Darwin exposes the POSIX.1-2008 API under its default feature set; defining
++# the strict _POSIX_C_SOURCE there instead hides the BSD extensions wlroots and
++# its dependencies rely on.
++if host_machine.system() != 'darwin'
++	project_c_args += '-D_POSIX_C_SOURCE=200809L'
++endif
++add_project_arguments(project_c_args, language: 'c')
+ 
+ cc = meson.get_compiler('c')
+ 
+@@ -146,15 +152,23 @@ subdir('include')
+ 
+ wlr_inc = include_directories('include')
+ 
+-symbols_file = 'wlroots.syms'
+-symbols_flag = '-Wl,--version-script,@0@/@1@'.format(meson.current_source_dir(), symbols_file)
++# macOS ld64 has no --version-script; skip the symbol-visibility script there
++# (all symbols are exported, which is acceptable for the Darwin build).
++if host_machine.system() == 'darwin'
++	symbols_flag = []
++	symbols_deps = []
++else
++	symbols_file = 'wlroots.syms'
++	symbols_flag = '-Wl,--version-script,@0@/@1@'.format(meson.current_source_dir(), symbols_file)
++	symbols_deps = symbols_file
++endif
+ lib_wlr = library(
+ 	versioned_name, wlr_files,
+ 	dependencies: wlr_deps,
+ 	include_directories: [wlr_inc],
+ 	install: true,
+ 	link_args: symbols_flag,
+-	link_depends: symbols_file,
++	link_depends: symbols_deps,
+ )
+ 
+ wlr_vars = {}
+-- 
+2.55.0
+

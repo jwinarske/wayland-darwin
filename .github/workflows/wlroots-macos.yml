@@ -1,0 +1,61 @@
+name: wlroots on macOS
+
+# Builds wlroots core on real macOS runners against the wayland-darwin
+# libwayland plus the libdrm-compat shim, all Linux-graphics backends off.
+# Covers Intel (macos-13) and Apple Silicon (macos-14 / macos-15).
+
+on:
+  push:
+    paths:
+      - 'wlroots-darwin/**'
+      - 'wayland-darwin/**'
+      - '.github/workflows/wlroots-macos.yml'
+  pull_request:
+    paths:
+      - 'wlroots-darwin/**'
+      - 'wayland-darwin/**'
+      - '.github/workflows/wlroots-macos.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: wlroots-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14, macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          uname -m
+          cc --version | head -1
+
+      - name: Install Homebrew deps
+        run: brew install cmake ninja meson pkgconf libffi expat libxml2 libxkbcommon pixman
+
+      - name: Build wlroots core
+        env:
+          PREFIX: ${{ github.workspace }}/prefix
+          SRC: ${{ github.workspace }}/src
+        run: ./wlroots-darwin/build-macos.sh
+
+      - name: Upload meson logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: wlroots-meson-logs-${{ matrix.os }}
+          path: |
+            src/wlroots/build-macos/meson-logs/
+          if-no-files-found: ignore
