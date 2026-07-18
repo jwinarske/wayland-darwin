@@ -33,6 +33,8 @@ Linux-specific pieces are already abstracted and feature-probed. Full audit of
 | `memfd_create`, `mkostemp`, `posix_fallocate`, `accept4`, `mremap`, `prctl`, `gettid` | various | ✅ each `HAVE_*`-probed with fallbacks |
 | `SOCK_CLOEXEC`, `MSG_CMSG_CLOEXEC` | `wayland-os.c` | ⚠ present natively on the BSDs but **not on macOS** — patched to fall through to the `fcntl(FD_CLOEXEC)` fallback (patch 0002) |
 | peer creds (`ucred`) | `wayland-os.c` | ⚠ the BSD/`SO_PEERCRED` branches don't fit Darwin — patched to add a `LOCAL_PEERCRED` + `LOCAL_PEERPID` branch (patch 0002) |
+| `MSG_NOSIGNAL` send flag | `connection.c` | ⚠ absent on macOS — patched to `#define` it away and suppress `SIGPIPE` per-socket with `SO_NOSIGPIPE` (patch 0002) |
+| `ppoll` | `wayland-client.c` | ⚠ absent on macOS — patched with a `poll(2)`-based fallback (patch 0002) |
 
 epoll-shim covers macOS as a tested target (its README lists macOS 13.7.1). It
 ships all four headers (`sys/{epoll,timerfd,signalfd,eventfd}.h`) and has
@@ -54,13 +56,18 @@ top-level `meson.build`:
   defining it on macOS *hides* the BSD extensions the OS-abstraction layer
   needs (`LOCAL_PEERCRED`, `struct xucred`, `u_int`).
 
-**`patches/0002-os-darwin-cloexec-and-peercred.patch`** — `src/wayland-os.c`:
+**`patches/0002-os-darwin-cloexec-and-peercred.patch`** — Darwin runtime
+portability across `wayland-os.{c,h}` and `wayland-client.c`:
 
 - Guard the `SOCK_CLOEXEC` / `MSG_CMSG_CLOEXEC` fast paths with `#ifdef`, so
   Darwin (which has neither, unlike the BSDs) falls through to the portable
   `fcntl(FD_CLOEXEC)` fallbacks already used for `EPOLL_CLOEXEC` / `accept4`.
 - Add a Darwin peer-credentials branch using `LOCAL_PEERCRED` (`struct
   xucred`) for uid/gid and `LOCAL_PEERPID` for the pid.
+- `MSG_NOSIGNAL` doesn't exist on macOS: define it away and suppress `SIGPIPE`
+  per-socket via `SO_NOSIGPIPE` (`set_nosigpipe`) in the socket/accept paths.
+- `ppoll(2)` doesn't exist on macOS: add a `poll(2)`-based fallback in
+  `wl_display_poll` (its only caller always passes `sigmask == NULL`).
 
 epoll-shim itself needs no patch (macOS is an upstream-tested target).
 

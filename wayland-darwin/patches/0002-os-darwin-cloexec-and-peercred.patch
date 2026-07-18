@@ -1,37 +1,106 @@
-From 9bd5ebfffc95224307d75e15227a2b81dab78942 Mon Sep 17 00:00:00 2001
+From fc67256c3fa592cb6ed7e6ebec650a25e58bf6a6 Mon Sep 17 00:00:00 2001
 From: Joel Winarske <joel.winarske@linux.com>
 Date: Sat, 18 Jul 2026 11:00:00 -0700
-Subject: [PATCH] os: support Darwin (macOS) cloexec and peer credentials
+Subject: [PATCH] Add Darwin (macOS) runtime portability to libwayland
 
-macOS lacks SOCK_CLOEXEC and MSG_CMSG_CLOEXEC (unlike the BSDs, which
-have them natively) and reads peer credentials differently. Guard the
-SOCK_CLOEXEC and MSG_CMSG_CLOEXEC fast paths so Darwin falls through to
-the portable fcntl(FD_CLOEXEC) fallbacks already used for EPOLL_CLOEXEC
-and accept4, and add a peercred branch using LOCAL_PEERCRED (struct
-xucred) plus LOCAL_PEERPID for the pid.
+macOS differs from the BSDs in several syscall/flag details that the
+existing FreeBSD/OpenBSD support does not cover:
+
+- SOCK_CLOEXEC / MSG_CMSG_CLOEXEC do not exist: guard the fast paths so
+  Darwin falls through to the portable fcntl(FD_CLOEXEC) fallbacks.
+- Peer credentials: add a LOCAL_PEERCRED (struct xucred) + LOCAL_PEERPID
+  branch instead of the FreeBSD/SO_PEERCRED ones.
+- No MSG_NOSIGNAL send flag: define it away and suppress SIGPIPE per
+  socket with SO_NOSIGPIPE (set_nosigpipe) in the socket/accept paths.
+- No ppoll(2): add a poll(2)-based fallback in wl_display_poll (its only
+  caller always passes sigmask == NULL).
 ---
- src/wayland-os.c | 25 ++++++++++++++++++++++++-
- 1 file changed, 24 insertions(+), 1 deletion(-)
+ src/wayland-client.c | 24 +++++++++++++++++++++
+ src/wayland-os.c     | 50 +++++++++++++++++++++++++++++++++++++++-----
+ src/wayland-os.h     |  8 +++++++
+ 3 files changed, 77 insertions(+), 5 deletions(-)
 
+diff --git a/src/wayland-client.c b/src/wayland-client.c
+index 8e5539f..6518d87 100644
+--- a/src/wayland-client.c
++++ b/src/wayland-client.c
+@@ -2031,6 +2031,30 @@ wl_display_cancel_read(struct wl_display *display)
+ 	pthread_mutex_unlock(&display->mutex);
+ }
+ 
++#ifdef __APPLE__
++/*
++ * Darwin (macOS) has no ppoll(2). wl_display_poll is the only caller and
++ * always passes sigmask == NULL, so a poll(2) with a millisecond timeout is an
++ * accurate substitute (the sub-millisecond precision of the timespec is not
++ * relied upon here).
++ */
++#include <limits.h>
++static int
++ppoll(struct pollfd *fds, nfds_t nfds, const struct timespec *timeout,
++      const void *sigmask)
++{
++	int ms = -1;
++
++	(void)sigmask;
++	if (timeout) {
++		int64_t v = (int64_t)timeout->tv_sec * 1000 +
++			    timeout->tv_nsec / 1000000;
++		ms = v > INT_MAX ? INT_MAX : (int)v;
++	}
++	return poll(fds, nfds, ms);
++}
++#endif
++
+ static int
+ wl_display_poll(struct wl_display *display,
+ 		short int events,
 diff --git a/src/wayland-os.c b/src/wayland-os.c
-index f00ead4..268babc 100644
+index f00ead4..254340a 100644
 --- a/src/wayland-os.c
 +++ b/src/wayland-os.c
-@@ -75,11 +75,13 @@ wl_os_socket_cloexec(int domain, int type, int protocol)
+@@ -70,19 +70,38 @@ err:
+ 	return -1;
+ }
+ 
++/*
++ * Darwin (macOS) has no MSG_NOSIGNAL send flag; the equivalent is the
++ * SO_NOSIGPIPE socket option, set once per socket. On platforms that lack it
++ * (e.g. Linux, which uses MSG_NOSIGNAL) this is a no-op passthrough.
++ */
++static int
++set_nosigpipe(int fd)
++{
++#ifdef SO_NOSIGPIPE
++	int on = 1;
++
++	if (fd != -1)
++		setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
++#endif
++	return fd;
++}
++
+ int
+ wl_os_socket_cloexec(int domain, int type, int protocol)
  {
  	int fd;
  
 +#ifdef SOCK_CLOEXEC
  	fd = wl_socket(domain, type | SOCK_CLOEXEC, protocol);
  	if (fd >= 0)
- 		return fd;
+-		return fd;
++		return set_nosigpipe(fd);
  	if (errno != EINVAL)
  		return -1;
 +#endif
  
  	fd = wl_socket(domain, type, protocol);
- 	return set_cloexec_or_close(fd);
-@@ -125,6 +127,27 @@ wl_os_socket_peercred(int sockfd, uid_t *uid, gid_t *gid, pid_t *pid)
+-	return set_cloexec_or_close(fd);
++	return set_nosigpipe(set_cloexec_or_close(fd));
+ }
+ 
+ #if defined(__FreeBSD__)
+@@ -125,6 +144,27 @@ wl_os_socket_peercred(int sockfd, uid_t *uid, gid_t *gid, pid_t *pid)
  	*pid = ucred.pid;
  	return 0;
  }
@@ -59,7 +128,7 @@ index f00ead4..268babc 100644
  #else
  #error "Don't know how to read ucred on this platform"
  #endif
-@@ -186,7 +209,7 @@ wl_os_recvmsg_cloexec(int sockfd, struct msghdr *msg, int flags)
+@@ -186,7 +226,7 @@ wl_os_recvmsg_cloexec(int sockfd, struct msghdr *msg, int flags)
  	 * fix (https://cgit.freebsd.org/src/commit/?id=6ceacebdf52211).
  	 */
  #pragma message("Using fallback directly since MSG_CMSG_CLOEXEC is broken.")
@@ -68,6 +137,39 @@ index f00ead4..268babc 100644
  	ssize_t len;
  
  	len = wl_recvmsg(sockfd, msg, flags | MSG_CMSG_CLOEXEC);
+@@ -223,13 +263,13 @@ wl_os_accept_cloexec(int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+ #ifdef HAVE_ACCEPT4
+ 	fd = accept4(sockfd, addr, addrlen, SOCK_CLOEXEC);
+ 	if (fd >= 0)
+-		return fd;
++		return set_nosigpipe(fd);
+ 	if (errno != ENOSYS)
+ 		return -1;
+ #endif
+ 
+ 	fd = accept(sockfd, addr, addrlen);
+-	return set_cloexec_or_close(fd);
++	return set_nosigpipe(set_cloexec_or_close(fd));
+ }
+ 
+ /*
+diff --git a/src/wayland-os.h b/src/wayland-os.h
+index 068fd2f..a69a1af 100644
+--- a/src/wayland-os.h
++++ b/src/wayland-os.h
+@@ -73,4 +73,12 @@ wl_os_mremap_maymove(int fd, void *old_data, ssize_t *old_size,
+ 
+ #endif /* __linux__ */
+ 
++/*
++ * Darwin (macOS) has no MSG_NOSIGNAL. Define it away here; SIGPIPE is instead
++ * suppressed per-socket via SO_NOSIGPIPE in wayland-os.c (set_nosigpipe).
++ */
++#ifndef MSG_NOSIGNAL
++#define MSG_NOSIGNAL 0
++#endif
++
+ #endif
 -- 
 2.55.0
 
