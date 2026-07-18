@@ -40,7 +40,9 @@ fetch_pin "$EPOLL_SHIM_URL" "$EPOLL_SHIM_REF" "$SRC/epoll-shim"
 if ! command -v brew >/dev/null; then echo "Homebrew required"; exit 2; fi
 brew install cmake ninja meson pkgconf libffi expat libxml2 >/dev/null || true
 
-export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig"
+# NB: epoll-shim installs its .pc into libdata/pkgconfig (BSD convention), not
+# lib/pkgconfig — include both.
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/libdata/pkgconfig:$PREFIX/share/pkgconfig"
 for keg in libffi expat libxml2; do
 	p="$(brew --prefix "$keg")/lib/pkgconfig"
 	[ -d "$p" ] && PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$p"
@@ -58,7 +60,13 @@ cmake -S "$SRC/epoll-shim" -B "$SRC/epoll-shim/build-macos" -G Ninja \
 	-DBUILD_TESTING=OFF
 cmake --build "$SRC/epoll-shim/build-macos" -j "$JOBS"
 cmake --install "$SRC/epoll-shim/build-macos"
-pkg-config --exists epoll-shim && echo "    epoll-shim.pc OK: $(pkg-config --cflags epoll-shim)"
+# Hard check: if pkg-config can't see epoll-shim now, the wayland configure
+# below will fail confusingly — fail here instead, with the search path shown.
+if ! pkg-config --exists epoll-shim; then
+	echo "ERROR: epoll-shim.pc not found on PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >&2
+	exit 1
+fi
+echo "    epoll-shim.pc OK: $(pkg-config --cflags epoll-shim)"
 
 # ---- 2. libwayland (meson) --------------------------------------------------
 # Apply the Darwin build-support patch (adds 'darwin' to the epoll-shim branch
