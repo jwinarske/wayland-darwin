@@ -109,11 +109,14 @@ IOSurface currency as the software path. LINEAR-only (DRM XRGB8888/ARGB8888 ↔
 is the one Darwin piece CI can **run**: `metal-smoke` renders a red rect into an
 IOSurface and reads it back.
 
-Increment 1 (here) does solid-colour rects; sampling client surfaces
-(`add_texture` / `texture_from_buffer`) is the next increment, so `darwin-tinywl`
-still uses pixman until then.
+It handles both solid-colour rects (backgrounds) and **client-surface
+texturing**: `texture_from_buffer` uploads a client's pixels to an `MTLTexture`,
+and `add_texture` samples it onto a quad (src/dst boxes, alpha, nearest/bilinear)
+via a textured pipeline. `metal-smoke` verifies both — a red rect and a
+composited green texture, read back from the IOSurface.
 
 ## Next
 
-- Metal `add_texture` / `texture_from_buffer` (composite real client surfaces).
+- Metal `add_texture` transforms (`wl_output_transform`) and damage-region
+  texture upload; zero-copy IOSurface-wrap for IOSurface-backed client buffers.
 - Window resize → `wlr_output_send_request_state`; multi-output; `backingScaleFactor`.

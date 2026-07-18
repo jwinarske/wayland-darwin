@@ -33,4 +33,27 @@ void darwin_metal_pass_rect(darwin_metal_pass *pass, int x, int y, int w, int h,
 /* End encoding, commit, and wait for completion. */
 bool darwin_metal_pass_submit(darwin_metal_pass *pass);
 
+/* -- textures (client surfaces) -- */
+
+typedef struct darwin_metal_texture darwin_metal_texture;
+
+/* Create an MTLTexture (BGRA) and upload `data` (LINEAR, `stride` bytes/row). */
+darwin_metal_texture *darwin_metal_texture_create(darwin_metal *metal,
+	uint32_t width, uint32_t height, uint32_t drm_format,
+	const void *data, uint32_t stride);
+/* Re-upload the whole texture (damage-aware upload is a later optimization). */
+bool darwin_metal_texture_update(darwin_metal_texture *tex, const void *data,
+	uint32_t stride);
+void darwin_metal_texture_destroy(darwin_metal_texture *tex);
+
+/*
+ * Sample `tex` onto a quad. Destination box in target pixels (top-left origin);
+ * source box normalized [0,1] in texture space. `alpha` scales opacity;
+ * `nearest` picks nearest vs bilinear filtering.
+ */
+void darwin_metal_pass_texture(darwin_metal_pass *pass, darwin_metal_texture *tex,
+	int dx, int dy, int dw, int dh,
+	float sx, float sy, float sw, float sh,
+	float alpha, int nearest);
+
 #endif
