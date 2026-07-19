@@ -72,7 +72,7 @@ meson install -C "$WP_BUILD"
 echo "==> building wayland-cxx-scanner"
 WCS="$SRC/wayland-cxx-scanner"
 WCS_BUILD="$WCS/build-macos"
-COMPAT_INC="-I$PREFIX/include/libepoll-shim -I$ROOT/wlroots-darwin/compat -I$HERE/compat"
+COMPAT_INC="-I$PREFIX/include/libepoll-shim -I$ROOT/wlroots-darwin/compat -I$HERE/compat -include $HERE/compat/darwin_syscalls.h"
 WCS_OPTS=(
 	--prefix "$PREFIX"
 	-Dexamples=true -Dtests=false -Dwerror=false
