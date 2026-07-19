@@ -619,10 +619,31 @@ void darwin_cocoa_window_move_cursor(darwin_cocoa_window *handle, int x, int y) 
 
 static int g_return_code = 0;
 
+/*
+ * A minimal main menu. Required for a Regular-policy app: Command-key events are
+ * routed through the menu for key-equivalents, so a nil mainMenu can fault when
+ * Command is pressed. The single Quit item also gives the window a clean way to
+ * terminate.
+ */
+static void install_main_menu(void) {
+	NSMenu *menubar = [[NSMenu alloc] init];
+	NSMenuItem *appItem = [[NSMenuItem alloc] init];
+	[menubar addItem:appItem];
+
+	NSMenu *appMenu = [[NSMenu alloc] init];
+	NSString *name = [[NSProcessInfo processInfo] processName];
+	[appMenu addItemWithTitle:[@"Quit " stringByAppendingString:name]
+		action:@selector(terminate:) keyEquivalent:@"q"];
+	appItem.submenu = appMenu;
+
+	NSApp.mainMenu = menubar;
+}
+
 int wlr_darwin_application_run(int (*compositor_main)(void *), void *data) {
 	@autoreleasepool {
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+		install_main_menu();
 
 		NSThread *thread = [[NSThread alloc] initWithBlock:^{
 			int rc = compositor_main(data);
