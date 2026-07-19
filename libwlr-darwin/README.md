@@ -120,8 +120,13 @@ IOSurface and reads it back.
 It handles both solid-colour rects (backgrounds) and **client-surface
 texturing**: `texture_from_buffer` uploads a client's pixels to an `MTLTexture`,
 and `add_texture` samples it onto a quad (src/dst boxes, alpha, nearest/bilinear)
-via a textured pipeline. `metal-smoke` verifies both — a red rect and a
-composited green texture, read back from the IOSurface.
+via a textured pipeline. Blend modes are distinct pipelines (premultiplied
+alpha-over vs. `NONE` replace), `update_from_buffer` re-uploads only the damaged
+sub-regions (`replaceRegion:` per rect), and `render_timer` reports GPU
+execution time from the command buffer (`GPUEndTime − GPUStartTime`).
+`metal-smoke` verifies all of it headless — rect, texture, transform,
+`read_pixels`, both blend modes, and a damage-region upload — read back from the
+IOSurface.
 
 ## Clipboard
 
@@ -132,8 +137,8 @@ change count, with loop-avoidance). `darwin-tinywl` creates it after the seat.
 
 ## Next
 
-- Metal: damage-region texture upload; distinct blend modes; `render_timer`.
 - Multi-output (more than one NSWindow); hardware cursor CALayer fast path.
+- Display-link present timing / frame-completion feedback.
 
 Metal `add_texture` now bakes `wl_output_transform` into the sampled UVs,
 `read_pixels` reads a texture back (screencopy), and IOSurface-backed client

@@ -41,8 +41,8 @@ static const char *kShaderSource =
 @public
 	id<MTLDevice> device;
 	id<MTLCommandQueue> queue;
-	id<MTLRenderPipelineState> solid;
-	id<MTLRenderPipelineState> textured;
+	id<MTLRenderPipelineState> solid, solidNoBlend;
+	id<MTLRenderPipelineState> textured, texturedNoBlend;
 	id<MTLSamplerState> samplerLinear;
 	id<MTLSamplerState> samplerNearest;
 }
@@ -59,14 +59,31 @@ static const char *kShaderSource =
 @implementation DarwinMetalTexture
 @end
 
-/* sRGB straight-alpha over blending, shared by both pipelines. */
-static void configure_blend(MTLRenderPipelineColorAttachmentDescriptor *att) {
+/*
+ * Premultiplied-alpha "over" blending (or replace, when blend is NO). wlroots
+ * textures carry premultiplied alpha, so source factor is One (not SourceAlpha);
+ * the fragment shader's opacity scale keeps the texel premultiplied.
+ */
+static void configure_attachment(
+		MTLRenderPipelineColorAttachmentDescriptor *att, BOOL blend) {
 	att.pixelFormat = MTLPixelFormatBGRA8Unorm;
-	att.blendingEnabled = YES;
-	att.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
-	att.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
-	att.sourceAlphaBlendFactor = MTLBlendFactorOne;
-	att.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+	att.blendingEnabled = blend;
+	if (blend) {
+		att.sourceRGBBlendFactor = MTLBlendFactorOne;
+		att.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+		att.sourceAlphaBlendFactor = MTLBlendFactorOne;
+		att.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+	}
+}
+
+static id<MTLRenderPipelineState> make_pipeline(id<MTLDevice> device,
+		id<MTLLibrary> lib, NSString *vs, NSString *fs, BOOL blend,
+		NSError **err) {
+	MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
+	pd.vertexFunction = [lib newFunctionWithName:vs];
+	pd.fragmentFunction = [lib newFunctionWithName:fs];
+	configure_attachment(pd.colorAttachments[0], blend);
+	return [device newRenderPipelineStateWithDescriptor:pd error:err];
 }
 
 @interface DarwinMetalPass : NSObject {
@@ -95,25 +112,17 @@ darwin_metal *darwin_metal_create(void) {
 		return NULL;
 	}
 
-	MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new];
-	pd.vertexFunction = [lib newFunctionWithName:@"solid_vs"];
-	pd.fragmentFunction = [lib newFunctionWithName:@"solid_fs"];
-	configure_blend(pd.colorAttachments[0]);
 	id<MTLRenderPipelineState> solid =
-		[device newRenderPipelineStateWithDescriptor:pd error:&err];
-	if (solid == nil) {
-		NSLog(@"libwlr-darwin: Metal solid pipeline failed: %@", err);
-		return NULL;
-	}
-
-	MTLRenderPipelineDescriptor *tpd = [MTLRenderPipelineDescriptor new];
-	tpd.vertexFunction = [lib newFunctionWithName:@"tex_vs"];
-	tpd.fragmentFunction = [lib newFunctionWithName:@"tex_fs"];
-	configure_blend(tpd.colorAttachments[0]);
+		make_pipeline(device, lib, @"solid_vs", @"solid_fs", YES, &err);
+	id<MTLRenderPipelineState> solidNoBlend =
+		make_pipeline(device, lib, @"solid_vs", @"solid_fs", NO, &err);
 	id<MTLRenderPipelineState> textured =
-		[device newRenderPipelineStateWithDescriptor:tpd error:&err];
-	if (textured == nil) {
-		NSLog(@"libwlr-darwin: Metal textured pipeline failed: %@", err);
+		make_pipeline(device, lib, @"tex_vs", @"tex_fs", YES, &err);
+	id<MTLRenderPipelineState> texturedNoBlend =
+		make_pipeline(device, lib, @"tex_vs", @"tex_fs", NO, &err);
+	if (solid == nil || solidNoBlend == nil || textured == nil ||
+			texturedNoBlend == nil) {
+		NSLog(@"libwlr-darwin: Metal pipeline creation failed: %@", err);
 		return NULL;
 	}
 
@@ -127,7 +136,9 @@ darwin_metal *darwin_metal_create(void) {
 	m->device = device;
 	m->queue = [device newCommandQueue];
 	m->solid = solid;
+	m->solidNoBlend = solidNoBlend;
 	m->textured = textured;
+	m->texturedNoBlend = texturedNoBlend;
 	m->samplerLinear = samplerLinear;
 	m->samplerNearest = samplerNearest;
 	return (darwin_metal *)CFBridgingRetain(m);
@@ -191,19 +202,23 @@ void darwin_metal_pass_rect(darwin_metal_pass *handle, int x, int y, int w, int 
 	float verts[8] = { x0, y0, x1, y0, x0, y1, x1, y1 };
 	float color[4] = { r, g, b, a };
 
-	(void)blend; /* single alpha-over pipeline for now */
-	[p->enc setRenderPipelineState:p->metal->solid];
+	[p->enc setRenderPipelineState:(blend ? p->metal->solid
+					: p->metal->solidNoBlend)];
 	[p->enc setVertexBytes:verts length:sizeof(verts) atIndex:0];
 	[p->enc setFragmentBytes:color length:sizeof(color) atIndex:0];
 	[p->enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0
 		vertexCount:4];
 }
 
-bool darwin_metal_pass_submit(darwin_metal_pass *handle) {
+bool darwin_metal_pass_submit(darwin_metal_pass *handle, int64_t *out_gpu_ns) {
 	DarwinMetalPass *p = (DarwinMetalPass *)CFBridgingRelease(handle);
 	[p->enc endEncoding];
 	[p->cmd commit];
 	[p->cmd waitUntilCompleted];
+	if (out_gpu_ns != NULL) {
+		double ns = (p->cmd.GPUEndTime - p->cmd.GPUStartTime) * 1e9;
+		*out_gpu_ns = ns > 0 ? (int64_t)ns : 0;
+	}
 	return p->cmd.status == MTLCommandBufferStatusCompleted;
 }
 
@@ -264,6 +279,17 @@ bool darwin_metal_texture_update(darwin_metal_texture *handle, const void *data,
 	return true;
 }
 
+bool darwin_metal_texture_update_region(darwin_metal_texture *handle,
+		const void *data, uint32_t stride, uint32_t x, uint32_t y,
+		uint32_t w, uint32_t h) {
+	DarwinMetalTexture *t = (__bridge DarwinMetalTexture *)handle;
+	/* Source bytes for the region start at its top-left in the full buffer. */
+	const uint8_t *src = (const uint8_t *)data + (size_t)y * stride + (size_t)x * 4;
+	[t->texture replaceRegion:MTLRegionMake2D(x, y, w, h)
+		mipmapLevel:0 withBytes:src bytesPerRow:stride];
+	return true;
+}
+
 bool darwin_metal_texture_read(darwin_metal_texture *handle, void *dst,
 		uint32_t stride, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
 	DarwinMetalTexture *t = (__bridge DarwinMetalTexture *)handle;
@@ -282,7 +308,7 @@ void darwin_metal_texture_destroy(darwin_metal_texture *handle) {
 
 void darwin_metal_pass_texture(darwin_metal_pass *handle,
 		darwin_metal_texture *thandle, int dx, int dy, int dw, int dh,
-		const float uv[8], float alpha, int nearest) {
+		const float uv[8], float alpha, int nearest, int blend) {
 	DarwinMetalPass *p = (__bridge DarwinMetalPass *)handle;
 	DarwinMetalTexture *t = (__bridge DarwinMetalTexture *)thandle;
 	float W = (float)p->width, H = (float)p->height;
@@ -297,7 +323,8 @@ void darwin_metal_pass_texture(darwin_metal_pass *handle,
 		x0, y1, uv[4], uv[5],  x1, y1, uv[6], uv[7],
 	};
 
-	[p->enc setRenderPipelineState:p->metal->textured];
+	[p->enc setRenderPipelineState:(blend ? p->metal->textured
+					: p->metal->texturedNoBlend)];
 	[p->enc setVertexBytes:verts length:sizeof(verts) atIndex:0];
 	[p->enc setFragmentTexture:t->texture atIndex:0];
 	[p->enc setFragmentSamplerState:(nearest ? p->metal->samplerNearest

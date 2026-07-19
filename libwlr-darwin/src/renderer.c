@@ -1,17 +1,19 @@
 /*
- * Metal renderer (W6) — pure-C wlroots renderer/pass implementation that drives
+ * Metal renderer — pure-C wlroots renderer/pass implementation that drives
  * Metal (metal.m) to render into IOSurface buffers.
  *
- * Increment 1: solid-colour rects into an IOSurface render target, plus format
- * negotiation and read-back-via-IOSurface. Texturing client surfaces
- * (add_texture / texture_from_buffer) is the next increment.
+ * Covers solid-colour rects, client-surface texturing (add_texture /
+ * texture_from_buffer, zero-copy from IOSurface or CPU upload), transform-baked
+ * UVs, read_pixels, distinct blend modes, damage-region texture updates, and a
+ * GPU render_timer.
  *
- * Formats are LINEAR-only (A2): DRM XRGB8888 / ARGB8888 <-> MTLPixelFormatBGRA8Unorm.
+ * Formats are LINEAR-only: DRM XRGB8888 / ARGB8888 <-> MTLPixelFormatBGRA8Unorm.
  */
 #include <assert.h>
 #include <stdlib.h>
 
 #include <drm_fourcc.h>
+#include <pixman.h>
 #include <wayland-server-core.h>
 #include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/drm_format_set.h>
@@ -32,10 +34,16 @@ struct wlr_darwin_metal_renderer {
 	struct wlr_drm_format_set formats;
 };
 
+struct wlr_darwin_metal_timer {
+	struct wlr_render_timer base;
+	int duration_ns;
+};
+
 struct wlr_darwin_metal_pass {
 	struct wlr_render_pass base;
 	struct wlr_buffer *buffer;
 	darwin_metal_pass *pass;
+	struct wlr_darwin_metal_timer *timer; // optional, from pass options
 };
 
 struct wlr_darwin_metal_texture {
@@ -159,14 +167,20 @@ static void pass_add_texture(struct wlr_render_pass *wlr_pass,
 
 	float alpha = options->alpha != NULL ? *options->alpha : 1.0f;
 	int nearest = options->filter_mode == WLR_SCALE_FILTER_NEAREST;
+	int blend = options->blend_mode != WLR_RENDER_BLEND_MODE_NONE;
 
 	darwin_metal_pass_texture(pass->pass, texture->tex,
-		dst.x, dst.y, dst.width, dst.height, uv, alpha, nearest);
+		dst.x, dst.y, dst.width, dst.height, uv, alpha, nearest, blend);
 }
 
 static bool pass_submit(struct wlr_render_pass *wlr_pass) {
 	struct wlr_darwin_metal_pass *pass = wl_container_of(wlr_pass, pass, base);
-	bool ok = darwin_metal_pass_submit(pass->pass);
+	int64_t gpu_ns = 0;
+	bool ok = darwin_metal_pass_submit(pass->pass,
+		pass->timer != NULL ? &gpu_ns : NULL);
+	if (pass->timer != NULL) {
+		pass->timer->duration_ns = (int)gpu_ns;
+	}
 	wlr_buffer_unlock(pass->buffer);
 	free(pass);
 	return ok;
@@ -199,12 +213,15 @@ static struct wlr_render_pass *begin_buffer_pass(struct wlr_renderer *wlr,
 
 	struct wlr_darwin_metal_pass *pass = calloc(1, sizeof(*pass));
 	if (pass == NULL) {
-		darwin_metal_pass_submit(mpass);
+		darwin_metal_pass_submit(mpass, NULL);
 		return NULL;
 	}
 	wlr_render_pass_init(&pass->base, &pass_impl);
 	pass->buffer = buffer;
 	pass->pass = mpass;
+	if (options != NULL && options->timer != NULL) {
+		pass->timer = wl_container_of(options->timer, pass->timer, base);
+	}
 	wlr_buffer_lock(buffer);
 	return &pass->base;
 }
@@ -222,8 +239,27 @@ static bool texture_update_from_buffer(struct wlr_texture *wlr_texture,
 			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
 		return false;
 	}
-	/* Full re-upload; damage-region upload is a later optimization. */
-	bool ok = darwin_metal_texture_update(texture->tex, data, (uint32_t)stride);
+	int n = 0;
+	const pixman_box32_t *rects = damage != NULL
+		? pixman_region32_rectangles((pixman_region32_t *)damage, &n) : NULL;
+	bool ok = true;
+	if (rects != NULL && n > 0) {
+		int tw = wlr_texture->width, th = wlr_texture->height;
+		for (int i = 0; i < n; i++) {
+			int x = rects[i].x1, y = rects[i].y1;
+			int w = rects[i].x2 - x, h = rects[i].y2 - y;
+			if (x < 0) { w += x; x = 0; }
+			if (y < 0) { h += y; y = 0; }
+			if (x + w > tw) { w = tw - x; }
+			if (y + h > th) { h = th - y; }
+			if (w > 0 && h > 0) {
+				darwin_metal_texture_update_region(texture->tex, data,
+					(uint32_t)stride, x, y, w, h);
+			}
+		}
+	} else {
+		ok = darwin_metal_texture_update(texture->tex, data, (uint32_t)stride);
+	}
 	wlr_buffer_end_data_ptr_access(buffer);
 	return ok;
 }
@@ -302,6 +338,33 @@ static struct wlr_texture *texture_from_buffer(struct wlr_renderer *wlr,
 	return &texture->base;
 }
 
+/* -- render timer (GPU telemetry) -- */
+
+static int timer_get_duration_ns(struct wlr_render_timer *wlr_timer) {
+	struct wlr_darwin_metal_timer *timer = wl_container_of(wlr_timer, timer, base);
+	return timer->duration_ns;
+}
+
+static void timer_destroy(struct wlr_render_timer *wlr_timer) {
+	struct wlr_darwin_metal_timer *timer = wl_container_of(wlr_timer, timer, base);
+	free(timer);
+}
+
+static const struct wlr_render_timer_impl timer_impl = {
+	.get_duration_ns = timer_get_duration_ns,
+	.destroy = timer_destroy,
+};
+
+static struct wlr_render_timer *render_timer_create(struct wlr_renderer *wlr) {
+	struct wlr_darwin_metal_timer *timer = calloc(1, sizeof(*timer));
+	if (timer == NULL) {
+		return NULL;
+	}
+	timer->base.impl = &timer_impl;
+	timer->duration_ns = -1;
+	return &timer->base;
+}
+
 static const struct wlr_renderer_impl renderer_impl = {
 	.get_render_formats = get_render_formats,
 	.get_texture_formats = get_texture_formats,
@@ -309,6 +372,7 @@ static const struct wlr_renderer_impl renderer_impl = {
 	.destroy = renderer_destroy,
 	.begin_buffer_pass = begin_buffer_pass,
 	.texture_from_buffer = texture_from_buffer,
+	.render_timer_create = render_timer_create,
 };
 
 struct wlr_renderer *wlr_darwin_metal_renderer_create(void) {

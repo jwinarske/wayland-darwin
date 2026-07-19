@@ -6,6 +6,10 @@
  * 3: composite a top-left-red texture with a 180 transform -> red lands
  *    bottom-right (transform correctness).
  * 4: read a texture back with wlr_texture_read_pixels (screencopy path).
+ * 5: composite a 50%-premultiplied-green texture over a red target with
+ *    BLEND_NONE (replace -> green) vs PREMULTIPLIED (over -> yellow).
+ * 6: partial upload -- update only a damage sub-region of a texture and
+ *    verify the update lands there and nowhere else.
  *
  * Exit 0 = PASS (or SKIP if no Metal device).
  */
@@ -14,9 +18,11 @@
 #include <stdlib.h>
 
 #include <drm_fourcc.h>
+#include <pixman.h>
 #include <wayland-server-core.h>
 #include <wayland-server-protocol.h>
 #include <wlr-darwin.h>
+#include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/drm_format_set.h>
 #include <wlr/render/pass.h>
@@ -69,6 +75,50 @@ static void px_green(int x, int y, uint8_t *p)  { p[0]=0;   p[1]=255; p[2]=0;   
 static void px_tl_red(int x, int y, uint8_t *p) { /* red in the top-left quadrant */
 	int r = (x < SZ/2 && y < SZ/2);
 	p[0]=0; p[1]=0; p[2]=r?255:0; p[3]=255;
+}
+/* premultiplied 50% green: rgb already scaled by alpha=0.5 */
+static void px_premul_green(int x, int y, uint8_t *p) { p[0]=0; p[1]=128; p[2]=0; p[3]=128; }
+
+/*
+ * Minimal CPU-only wlr_buffer (plain malloc, not IOSurface) so
+ * texture_from_buffer takes the *upload* path -- the damage phase needs a
+ * texture whose storage is separate from the source buffer.
+ */
+struct cpu_buffer {
+	struct wlr_buffer base;
+	uint8_t *data;
+	size_t stride;
+};
+
+static void cpu_buffer_destroy(struct wlr_buffer *b) {
+	struct cpu_buffer *cb = (struct cpu_buffer *)b;
+	free(cb->data);
+	free(cb);
+}
+static bool cpu_buffer_begin(struct wlr_buffer *b, uint32_t flags,
+		void **data, uint32_t *format, size_t *stride) {
+	struct cpu_buffer *cb = (struct cpu_buffer *)b;
+	*data = cb->data;
+	*format = DRM_FORMAT_XRGB8888;
+	*stride = cb->stride;
+	return true;
+}
+static void cpu_buffer_end(struct wlr_buffer *b) { (void)b; }
+static const struct wlr_buffer_impl cpu_buffer_impl = {
+	.destroy = cpu_buffer_destroy,
+	.begin_data_ptr_access = cpu_buffer_begin,
+	.end_data_ptr_access = cpu_buffer_end,
+};
+
+static struct cpu_buffer *cpu_buffer_create(void (*cb)(int, int, uint8_t *)) {
+	struct cpu_buffer *b = calloc(1, sizeof(*b));
+	b->stride = SZ * 4;
+	b->data = calloc(SZ, b->stride);
+	for (int y = 0; y < SZ; y++)
+		for (int x = 0; x < SZ; x++)
+			cb(x, y, b->data + y * b->stride + x * 4);
+	wlr_buffer_init(&b->base, &cpu_buffer_impl, SZ, SZ);
+	return b;
 }
 
 int
@@ -136,7 +186,63 @@ main(void)
 	ok &= read_ok;
 	free(rb);
 
-	printf(ok ? "metal smoke: PASS (rect, texture, transform, read_pixels)\n"
+	/* 5: blend modes. A 50%-premultiplied-green texture over a red target. */
+	struct wlr_buffer *pg = make_buffer(alloc); fill(pg, px_premul_green);
+	struct wlr_texture *tpg = wlr_texture_from_buffer(renderer, pg);
+
+	/* 5a: BLEND_NONE -> replace, so the target becomes the raw green texel. */
+	pass = wlr_renderer_begin_buffer_pass(renderer, target, NULL);
+	wlr_render_pass_add_rect(pass, &rect); /* red background */
+	struct wlr_render_texture_options bn = { .texture=tpg, .dst_box={0,0,SZ,SZ},
+		.blend_mode=WLR_RENDER_BLEND_MODE_NONE };
+	wlr_render_pass_add_texture(pass, &bn);
+	wlr_render_pass_submit(pass);
+	read_at(target, 0, 0, p);
+	int none_ok = p[1]>100 && p[1]<160 && p[2]<60; /* green kept, red gone */
+	printf("5a blend=none BGRA=%u,%u,%u,%u %s\n", p[0],p[1],p[2],p[3], none_ok?"ok":"BAD");
+	ok &= none_ok;
+
+	/* 5b: PREMULTIPLIED -> over, so red shows through the 50% alpha (yellow). */
+	pass = wlr_renderer_begin_buffer_pass(renderer, target, NULL);
+	wlr_render_pass_add_rect(pass, &rect); /* red background */
+	struct wlr_render_texture_options pm = { .texture=tpg, .dst_box={0,0,SZ,SZ},
+		.blend_mode=WLR_RENDER_BLEND_MODE_PREMULTIPLIED };
+	wlr_render_pass_add_texture(pass, &pm);
+	wlr_render_pass_submit(pass);
+	read_at(target, 0, 0, p);
+	int over_ok = p[1]>100 && p[1]<160 && p[2]>100 && p[2]<160; /* R~G~128 */
+	printf("5b blend=over BGRA=%u,%u,%u,%u %s\n", p[0],p[1],p[2],p[3], over_ok?"ok":"BAD");
+	ok &= over_ok;
+
+	/* 6: damage upload. Green texture, then recolor a 16x16 patch to blue and
+	 * update only that damage region; the rest must stay green. */
+	struct cpu_buffer *cbuf = cpu_buffer_create(px_green);
+	struct wlr_texture *tdmg = wlr_texture_from_buffer(renderer, &cbuf->base);
+	for (int y = 16; y < 32; y++)
+		for (int x = 16; x < 32; x++) {
+			uint8_t *q = cbuf->data + y * cbuf->stride + x * 4;
+			q[0]=255; q[1]=0; q[2]=0; q[3]=255; /* blue */
+		}
+	pixman_region32_t dmg;
+	pixman_region32_init_rect(&dmg, 16, 16, 16, 16);
+	int upd = wlr_texture_update_from_buffer(tdmg, &cbuf->base, &dmg);
+	pixman_region32_fini(&dmg);
+	/* Composite (replace) and read: patch blue, elsewhere still green. */
+	pass = wlr_renderer_begin_buffer_pass(renderer, target, NULL);
+	struct wlr_render_texture_options dto = { .texture=tdmg, .dst_box={0,0,SZ,SZ},
+		.blend_mode=WLR_RENDER_BLEND_MODE_NONE };
+	wlr_render_pass_add_texture(pass, &dto);
+	wlr_render_pass_submit(pass);
+	uint8_t pp[4]; read_at(target, 20, 20, p); read_at(target, 0, 0, pp);
+	int dmg_ok = upd && p[0]>200 && p[2]<60 &&      /* patch is blue */
+		pp[1]>200 && pp[0]<60;                       /* corner still green */
+	printf("6 damage    patch=%u,%u,%u corner=%u,%u,%u %s\n",
+		p[0],p[1],p[2], pp[0],pp[1],pp[2], dmg_ok?"ok":"BAD");
+	ok &= dmg_ok;
+	wlr_texture_destroy(tdmg);
+	wlr_buffer_drop(&cbuf->base);
+
+	printf(ok ? "metal smoke: PASS (rect, texture, transform, read_pixels, blend, damage)\n"
 		  : "metal smoke: FAIL\n");
 	return ok ? 0 : 1;
 }

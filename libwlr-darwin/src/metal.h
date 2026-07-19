@@ -25,13 +25,16 @@ darwin_metal_pass *darwin_metal_begin(darwin_metal *metal, void *iosurface_ref,
 
 /*
  * Draw a solid-colour rect. box is in target pixels, top-left origin; colour is
- * straight (non-premultiplied) RGBA in [0,1]. blend != 0 = alpha-over.
+ * straight (non-premultiplied) RGBA in [0,1]. blend != 0 = alpha-over, 0 = replace.
  */
 void darwin_metal_pass_rect(darwin_metal_pass *pass, int x, int y, int w, int h,
 	float r, float g, float b, float a, int blend);
 
-/* End encoding, commit, and wait for completion. */
-bool darwin_metal_pass_submit(darwin_metal_pass *pass);
+/*
+ * End encoding, commit, and wait for completion. If out_gpu_ns is non-NULL it
+ * receives the GPU execution time in nanoseconds (render-timer telemetry).
+ */
+bool darwin_metal_pass_submit(darwin_metal_pass *pass, int64_t *out_gpu_ns);
 
 /* -- textures (client surfaces) -- */
 
@@ -44,9 +47,13 @@ darwin_metal_texture *darwin_metal_texture_create(darwin_metal *metal,
 /* Wrap an existing IOSurface as a sampleable texture (zero-copy). */
 darwin_metal_texture *darwin_metal_texture_from_iosurface(darwin_metal *metal,
 	void *iosurface_ref, uint32_t width, uint32_t height);
-/* Re-upload the whole texture (damage-aware upload is a later optimization). */
+/* Re-upload the whole texture. */
 bool darwin_metal_texture_update(darwin_metal_texture *tex, const void *data,
 	uint32_t stride);
+/* Re-upload just a sub-region (damage). `data` points at the full buffer. */
+bool darwin_metal_texture_update_region(darwin_metal_texture *tex,
+	const void *data, uint32_t stride, uint32_t x, uint32_t y,
+	uint32_t w, uint32_t h);
 /* Read a region of the texture back into CPU memory (BGRA). */
 bool darwin_metal_texture_read(darwin_metal_texture *tex, void *dst,
 	uint32_t stride, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
@@ -61,6 +68,6 @@ void darwin_metal_texture_destroy(darwin_metal_texture *tex);
  */
 void darwin_metal_pass_texture(darwin_metal_pass *pass, darwin_metal_texture *tex,
 	int dx, int dy, int dw, int dh, const float uv[8],
-	float alpha, int nearest);
+	float alpha, int nearest, int blend);
 
 #endif
