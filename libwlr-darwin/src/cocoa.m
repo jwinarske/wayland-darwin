@@ -270,6 +270,34 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 @implementation WlrDarwinWindow
 @end
 
+/* ---- quit bridge ----------------------------------------------------------
+ *
+ * The backend registers its quit-pipe write end here; the menu's Quit item and
+ * each window's close button poke it so the compositor can shut down cleanly on
+ * its own thread. Falls back to AppKit termination if no backend is listening.
+ */
+static int g_quit_fd = -1;
+
+void darwin_cocoa_set_quit_fd(int fd) { g_quit_fd = fd; }
+
+static void request_quit(void) {
+	if (g_quit_fd >= 0) {
+		char b = 1;
+		(void)write(g_quit_fd, &b, 1);
+	} else {
+		[NSApp terminate:nil];
+	}
+}
+
+@interface WlrDarwinAppController : NSObject <NSWindowDelegate>
+@end
+@implementation WlrDarwinAppController
+- (void)requestQuit:(id)sender { (void)sender; request_quit(); }
+- (BOOL)windowShouldClose:(NSWindow *)sender { (void)sender; request_quit(); return NO; }
+@end
+
+static WlrDarwinAppController *g_controller;
+
 /* mach_absolute_time units -> nanoseconds. CVTimeStamp.hostTime is in the same
  * units as mach_absolute_time(), which on Darwin shares CLOCK_MONOTONIC's base. */
 static int64_t host_to_nsec(uint64_t host) {
@@ -317,6 +345,7 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 			styleMask:style backing:NSBackingStoreBuffered defer:NO];
 		nsw.title = @"wlroots";
 		nsw.releasedWhenClosed = NO;
+		nsw.delegate = g_controller; /* close button -> clean compositor shutdown */
 
 		WlrDarwinView *view = [[WlrDarwinView alloc] initWithFrame:rect];
 		view.inputFd = input_event_fd;
@@ -622,18 +651,22 @@ static int g_return_code = 0;
 /*
  * A minimal main menu. Required for a Regular-policy app: Command-key events are
  * routed through the menu for key-equivalents, so a nil mainMenu can fault when
- * Command is pressed. The single Quit item also gives the window a clean way to
- * terminate.
+ * Command is pressed. Quit (Command-Q) targets our controller so it flows
+ * through the compositor's graceful shutdown (request_quit) rather than an
+ * abrupt AppKit terminate.
  */
 static void install_main_menu(void) {
+	g_controller = [[WlrDarwinAppController alloc] init];
+
 	NSMenu *menubar = [[NSMenu alloc] init];
 	NSMenuItem *appItem = [[NSMenuItem alloc] init];
 	[menubar addItem:appItem];
 
 	NSMenu *appMenu = [[NSMenu alloc] init];
 	NSString *name = [[NSProcessInfo processInfo] processName];
-	[appMenu addItemWithTitle:[@"Quit " stringByAppendingString:name]
-		action:@selector(terminate:) keyEquivalent:@"q"];
+	NSMenuItem *quit = [appMenu addItemWithTitle:[@"Quit " stringByAppendingString:name]
+		action:@selector(requestQuit:) keyEquivalent:@"q"];
+	quit.target = g_controller;
 	appItem.submenu = appMenu;
 
 	NSApp.mainMenu = menubar;

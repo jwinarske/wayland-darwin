@@ -109,4 +109,14 @@ void darwin_cocoa_window_set_cursor_pixels(darwin_cocoa_window *win,
 	int hotspot_x, int hotspot_y);
 void darwin_cocoa_window_move_cursor(darwin_cocoa_window *win, int x, int y);
 
+/* ---- quit bridge ---------------------------------------------------------- */
+
+/*
+ * Register the write end of the backend's quit pipe. cocoa.m writes one byte to
+ * it when the user asks to quit (Command-Q or closing a window); the backend
+ * reads it on the compositor thread and runs the compositor's quit handler. Set
+ * to -1 to unregister (on backend teardown). Thread-safe (a plain store).
+ */
+void darwin_cocoa_set_quit_fd(int fd);
+
 #endif

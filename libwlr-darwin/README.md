@@ -172,6 +172,16 @@ flagged `VSYNC | HW_CLOCK` (plus `ZERO_COPY` for IOSurface buffers). This gives
 stamp. If the display link reports no host time, it falls back to
 `clock_gettime` and drops the `HW_CLOCK` flag.
 
+## Quit
+
+The app installs a minimal main menu (required so Command-key events route
+sanely for a Regular-activation app — a nil `mainMenu` can fault on Command).
+Command-Q and the window close button flow through a graceful shutdown:
+`cocoa.m` pokes the backend's quit pipe, the backend runs a compositor-supplied
+handler on the compositor thread (`wlr_darwin_backend_set_quit_handler`, wired
+in `darwin-tinywl` to `wl_display_terminate`), and `wl_display_run` unwinds
+through the normal teardown — instead of AppKit's abrupt process termination.
+
 ## Next
 
 - CADisplayLink (macOS 14+) to replace the deprecated CVDisplayLink.

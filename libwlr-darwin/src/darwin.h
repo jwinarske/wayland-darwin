@@ -28,6 +28,16 @@ struct wlr_darwin_backend {
 	 */
 	struct wlr_keyboard keyboard;
 
+	/*
+	 * Quit bridge: cocoa.m writes to quit_fd[1] on Command-Q / window close;
+	 * quit_source reads quit_fd[0] on the compositor thread and runs the
+	 * compositor-supplied quit_handler (typically wl_display_terminate).
+	 */
+	int quit_fd[2];
+	struct wl_event_source *quit_source;
+	void (*quit_handler)(void *data);
+	void *quit_data;
+
 	struct wl_listener event_loop_destroy;
 };
 

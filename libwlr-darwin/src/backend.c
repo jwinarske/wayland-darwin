@@ -1,5 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/socket.h>
 
 #include <wlr/backend/interface.h>
 #include <wlr/interfaces/wlr_keyboard.h>
@@ -21,6 +23,27 @@ struct wlr_darwin_backend *darwin_backend_from_backend(
 	struct wlr_darwin_backend *backend =
 		wl_container_of(wlr_backend, backend, backend);
 	return backend;
+}
+
+void wlr_darwin_backend_set_quit_handler(struct wlr_backend *wlr_backend,
+		void (*handler)(void *data), void *data) {
+	struct wlr_darwin_backend *backend =
+		darwin_backend_from_backend(wlr_backend);
+	backend->quit_handler = handler;
+	backend->quit_data = data;
+}
+
+/* cocoa.m poked the quit pipe (Command-Q / window close). Run the handler. */
+static int handle_quit(int fd, uint32_t mask, void *data) {
+	struct wlr_darwin_backend *backend = data;
+	char buf[16];
+	while (read(fd, buf, sizeof(buf)) == (ssize_t)sizeof(buf)) {
+		/* drain */
+	}
+	if (backend->quit_handler != NULL) {
+		backend->quit_handler(backend->quit_data);
+	}
+	return 0;
 }
 
 static bool backend_start(struct wlr_backend *wlr_backend) {
@@ -76,6 +99,16 @@ static void backend_destroy(struct wlr_backend *wlr_backend) {
 
 	wlr_keyboard_finish(&backend->keyboard);
 
+	darwin_cocoa_set_quit_fd(-1);
+	if (backend->quit_source) {
+		wl_event_source_remove(backend->quit_source);
+	}
+	for (int i = 0; i < 2; i++) {
+		if (backend->quit_fd[i] >= 0) {
+			close(backend->quit_fd[i]);
+		}
+	}
+
 	wlr_backend_finish(wlr_backend);
 
 	wl_list_remove(&backend->event_loop_destroy.link);
@@ -107,9 +140,19 @@ struct wlr_backend *wlr_darwin_backend_create(struct wl_event_loop *loop) {
 	wlr_backend_init(&backend->backend, &backend_impl);
 	backend->loop = loop;
 	wl_list_init(&backend->outputs);
+	backend->quit_fd[0] = backend->quit_fd[1] = -1;
 
 	/* One virtual keyboard for the backend; pointers are per-output. */
 	wlr_keyboard_init(&backend->keyboard, &keyboard_impl, "darwin-keyboard");
+
+	/* Quit bridge: cocoa.m (main thread) -> compositor thread. */
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, backend->quit_fd) == 0) {
+		backend->quit_source = wl_event_loop_add_fd(loop, backend->quit_fd[0],
+			WL_EVENT_READABLE, handle_quit, backend);
+		darwin_cocoa_set_quit_fd(backend->quit_fd[1]);
+	} else {
+		wlr_log_errno(WLR_ERROR, "quit socketpair failed");
+	}
 
 	backend->backend.buffer_caps = WLR_BUFFER_CAP_DATA_PTR | WLR_BUFFER_CAP_SHM;
 

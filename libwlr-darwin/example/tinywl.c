@@ -919,6 +919,12 @@ static void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 	wl_signal_add(&xdg_popup->events.destroy, &popup->destroy);
 }
 
+/* Darwin backend quit request (Command-Q / window close): terminate the display
+ * loop so compositor_main unwinds through the normal shutdown path. */
+static void handle_quit_request(void *data) {
+	wl_display_terminate(data);
+}
+
 static int compositor_main(void *data) {
 	char *startup_cmd = data;
 
@@ -935,6 +941,9 @@ static int compositor_main(void *data) {
 		wlr_log(WLR_ERROR, "failed to create wlr_backend");
 		return 1;
 	}
+	/* Command-Q / window close -> graceful shutdown on the compositor thread. */
+	wlr_darwin_backend_set_quit_handler(server.backend, handle_quit_request,
+		server.wl_display);
 
 	/* Autocreates a renderer, either Pixman, GLES2 or Vulkan for us. The user
 	 * can also specify a renderer using the WLR_RENDERER env var.

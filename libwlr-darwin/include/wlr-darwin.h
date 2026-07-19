@@ -47,6 +47,15 @@ struct wlr_output *wlr_darwin_add_output(struct wlr_backend *backend,
 	unsigned int width, unsigned int height);
 
 /**
+ * Register a handler invoked (on the compositor thread) when the user asks the
+ * app to quit — Command-Q or closing a window. The compositor typically calls
+ * wl_display_terminate() here for a graceful shutdown. Without a handler, quit
+ * requests fall back to AppKit's abrupt process termination.
+ */
+void wlr_darwin_backend_set_quit_handler(struct wlr_backend *backend,
+	void (*handler)(void *data), void *data);
+
+/**
  * Create the IOSurface allocator. Buffers it produces are IOSurface-backed and
  * present zero-copy on a Darwin output (assigned directly to CALayer.contents).
  * Pass it to wlr_output_init_render(); the pixman renderer draws straight into
