@@ -14,6 +14,14 @@ set -euo pipefail
 # (GitHub's runners ship aws/tap). We only use core formulae; disable the check.
 export HOMEBREW_NO_REQUIRE_TAP_TRUST=1
 
+# Put Homebrew on PATH — over SSH / in a non-login shell it isn't (Apple Silicon
+# installs it in /opt/homebrew, Intel in /usr/local).
+if ! command -v brew >/dev/null 2>&1; then
+	for _b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+		if [ -x "$_b" ]; then eval "$("$_b" shellenv)"; break; fi
+	done
+fi
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"                 # repo root: wayland-darwin/ + wlroots-darwin/
 SRC="${SRC:-$ROOT/src}"
