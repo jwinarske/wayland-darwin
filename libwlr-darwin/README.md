@@ -43,8 +43,8 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 |---|---|---|
 | `include/wlr-darwin.h` | C | public API: `wlr_darwin_application_run`, `wlr_darwin_backend_create`, `wlr_darwin_add_output` |
 | `src/darwin.h` | C | internal backend/output structs |
-| `src/backend.c` | C | `wlr_backend_impl` + one virtual keyboard/pointer + input-record decode → wlr events |
-| `src/output.c` | C | `wlr_output_impl` (test/commit/destroy) + present + frame clock + hardware cursor |
+| `src/backend.c` | C | `wlr_backend_impl` + the virtual keyboard + output count (`WLR_DARWIN_OUTPUTS`) |
+| `src/output.c` | C | `wlr_output_impl` (test/commit/destroy) + present + frame clock + hardware cursor + per-output pointer + input decode |
 | `src/allocator.c` | C | IOSurface allocator: `wlr_allocator_interface` + `wlr_buffer_impl` |
 | `src/keymap.c` | C | kVK → evdev key-code table (the single maintained pivot) |
 | `src/input.h` | C | main→compositor input wire format |
@@ -89,10 +89,12 @@ launched into its `WAYLAND_DISPLAY` renders as tiled surfaces in the window.
 
 ## Input
 
-The backend owns one virtual keyboard + one pointer (D5c). On the main thread,
-the content view captures NSEvents and serializes them (`input.h` records) to
-the main→compositor fd; the backend decodes them into `wlr_keyboard` /
-`wlr_pointer` events:
+The backend owns one virtual keyboard; each output owns its own `wlr_pointer`
+(its `output_name` binds absolute motion to that window, so the cursor lands in
+the right output). On the main thread, each window's content view captures
+NSEvents and serializes them (`input.h` records) to that output's
+main→compositor fd; `output.c` decodes them — key events to the shared keyboard,
+pointer events to that output's pointer:
 
 - **Keyboard** — `NSEvent.keyCode` (kVK) → evdev via `keymap.c`; `wlr_keyboard_notify_key`
   with `update_state` so the compositor-owned xkb keymap tracks modifiers.
@@ -147,9 +149,17 @@ convention as the primary buffer (no manual Y flip). Reposition/upload run in an
 action-disabled `CATransaction`, so the cursor tracks the pointer without
 implicit animation.
 
+## Multi-output
+
+Each `wlr_output` is a separate NSWindow with its own frame clock, resize
+stream, present path, hardware cursor, and pointer — so more than one is just
+more windows. Set `WLR_DARWIN_OUTPUTS=N` to start N of them (default 1;
+mirroring the X11 backend's `WLR_X11_OUTPUTS`); a compositor can also call
+`wlr_darwin_add_output()` directly to add or hot-plug outputs at runtime. In
+`darwin-tinywl` they tile side by side via `wlr_output_layout_add_auto`.
+
 ## Next
 
-- Multi-output (more than one NSWindow).
 - Display-link present timing / frame-completion feedback.
 
 Metal `add_texture` now bakes `wl_output_transform` into the sampled UVs,

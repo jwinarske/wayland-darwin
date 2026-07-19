@@ -20,19 +20,13 @@ struct wlr_darwin_backend {
 	bool started;
 	size_t last_output_num;
 
-	/* One virtual keyboard + pointer per backend (D5c). */
-	struct wlr_keyboard keyboard;
-	struct wlr_pointer pointer;
-
 	/*
-	 * D3 thread bridge: cocoa.m (main thread) posts serialized input events
-	 * into event_fd[1]; the compositor loop reads event_fd[0]. input_buf holds
-	 * a partially-read record across reads.
+	 * One virtual keyboard for the backend (keyboard focus is compositor-
+	 * managed, not output-relative). The pointer is per-output — each window is
+	 * its own output, and absolute motion is relative to that window — mirroring
+	 * the nested X11 backend.
 	 */
-	int event_fd[2];
-	struct wl_event_source *event_source;
-	uint8_t input_buf[sizeof(struct darwin_input_event)];
-	size_t input_buf_len;
+	struct wlr_keyboard keyboard;
 
 	struct wl_listener event_loop_destroy;
 };
@@ -43,6 +37,20 @@ struct wlr_darwin_output {
 	struct wl_list link;
 
 	darwin_cocoa_window *window; // main-thread owned
+
+	/* Per-output pointer; output_name binds its absolute motion to this output. */
+	struct wlr_pointer pointer;
+
+	/*
+	 * D3 thread bridge: cocoa.m (main thread) posts this window's serialized
+	 * input events into input_fd[1]; the compositor loop reads input_fd[0].
+	 * input_buf holds a partially-read record across reads. Key events are
+	 * routed to the backend keyboard; pointer events to this output's pointer.
+	 */
+	int input_fd[2];
+	struct wl_event_source *input_source;
+	uint8_t input_buf[sizeof(struct darwin_input_event)];
+	size_t input_buf_len;
 
 	/*
 	 * D6 frame clock. The real clock is CADisplayLink in cocoa.m writing to
