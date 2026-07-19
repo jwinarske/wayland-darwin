@@ -84,6 +84,29 @@ draws a checkerboard. It should appear as a tiled surface inside the
 would need the `waypipe` bridge into a Linux container — not built yet.
 `wl-client-demo` is the native macOS client for now.)
 
+## 6. C++ example clients (wayland-cxx-scanner)
+
+Build the C++ Wayland bindings + example clients (the GL/Vulkan/SDL3/Skia ones
+self-skip on macOS):
+
+```bash
+./wayland-cxx-scanner/build-macos.sh
+```
+
+Then, in the GUI session with `darwin-tinywl` running (step 4):
+
+```bash
+export DYLD_LIBRARY_PATH="$HOME/wlroots-darwin/prefix/lib"
+E=src/wayland-cxx-scanner/build-macos/examples
+WAYLAND_DISPLAY=wayland-1 "$E/minimal/minimal_roundtrip"          # connects + roundtrips
+WAYLAND_DISPLAY=wayland-1 "$E/wayland-info/wayland_info"          # dumps globals
+WAYLAND_DISPLAY=wayland-1 "$E/presentation-shm/presentation_shm" # animated shm window
+WAYLAND_DISPLAY=wayland-1 "$E/key-input/key_input"               # keyboard echo
+```
+
+These are pure `libwayland-client` C++ programs, composited on the GPU by the
+Metal renderer in `darwin-tinywl`.
+
 ## Notes
 
 - In-window keyboard/mouse need no special permissions (only *global* event
