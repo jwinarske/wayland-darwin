@@ -8,6 +8,7 @@
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
 #include <wlr/render/allocator.h>
+#include <wlr/render/pixman.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_compositor.h>
@@ -909,7 +910,12 @@ static int compositor_main(void *data) {
 	 * can also specify a renderer using the WLR_RENDERER env var.
 	 * The renderer is responsible for defining the various pixel formats it
 	 * supports for shared memory, this configures that for clients. */
-	server.renderer = wlr_renderer_autocreate(server.backend);
+	/* Accelerated Metal renderer; pixman fallback if Metal is absent. */
+	server.renderer = wlr_darwin_metal_renderer_create();
+	if (server.renderer == NULL) {
+		wlr_log(WLR_INFO, "Metal unavailable; using pixman renderer");
+		server.renderer = wlr_pixman_renderer_create();
+	}
 	if (server.renderer == NULL) {
 		wlr_log(WLR_ERROR, "failed to create wlr_renderer");
 		return 1;

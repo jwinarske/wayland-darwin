@@ -67,4 +67,24 @@ if get_option('examples')
 		dependencies: [wlr_darwin, dependency('xkbcommon')],
 		link_args: frameworks,
 	)
+
+	# A minimal Wayland client (libwayland-client only, no wlroots) to give the
+	# compositor something to display. wayland-scanner + wayland-protocols come
+	# from the shared prefix (installed by the wlroots-darwin build).
+	wl_client = dependency('wayland-client')
+	wl_scanner = find_program(
+		dependency('wayland-scanner', native: true).get_variable('wayland_scanner'),
+		native: true)
+	xdg_xml = dependency('wayland-protocols').get_variable('pkgdatadir') / \
+		'stable/xdg-shell/xdg-shell.xml'
+	xdg_header = custom_target('xdg-shell-client-protocol.h',
+		input: xdg_xml, output: 'xdg-shell-client-protocol.h',
+		command: [wl_scanner, 'client-header', '@INPUT@', '@OUTPUT@'])
+	xdg_code = custom_target('xdg-shell-protocol.c',
+		input: xdg_xml, output: 'xdg-shell-protocol.c',
+		command: [wl_scanner, 'private-code', '@INPUT@', '@OUTPUT@'])
+	executable('wl-client-demo',
+		['example/wl-client-demo.c', xdg_header, xdg_code],
+		dependencies: [wl_client],
+	)
 endif

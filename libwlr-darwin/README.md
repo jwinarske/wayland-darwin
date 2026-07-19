@@ -53,7 +53,8 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 | `src/cocoa.h` / `src/metal.h` | C | the C↔ObjC boundaries |
 | `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer, IOSurface, present, CVDisplayLink, NSEvent capture |
 | `example/darwin-smoke.c` | C | minimal compositor: opens a window, renders a colour each frame |
-| `example/tinywl.c` | C | wlroots' reference compositor, adapted to the Darwin backend (runs real clients) |
+| `example/tinywl.c` | C | wlroots' reference compositor, adapted to the Darwin backend (Metal renderer) |
+| `example/wl-client-demo.c` | C | minimal Wayland client (xdg-shell + shm) to display in the compositor |
 
 All Objective-C is confined to `cocoa.m` behind the `cocoa.h` C boundary.
 
