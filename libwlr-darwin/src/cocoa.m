@@ -255,8 +255,10 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 	WlrDarwinView *view;
 	CALayer *layer;
 	CALayer *cursorLayer;  /* overlay above content; nil until first set_cursor */
-	CVDisplayLinkRef displayLink;
-	uint64_t vsyncSeq; /* monotonic vsync counter (display-link thread) */
+	id caDisplayLink; /* CADisplayLink (macOS 14+), preferred clock; id avoids an
+	                     availability-typed ivar */
+	CVDisplayLinkRef displayLink; /* fallback on macOS < 14 */
+	uint64_t vsyncSeq; /* monotonic vsync counter */
 	int frameFd;  /* write end: struct darwin_frame_info per display tick */
 	int inputFd;  /* write end: serialized input events */
 	/* Hardware cursor state (main-thread only). Hotspot/size in buffer pixels; */
@@ -268,6 +270,19 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 @end
 
 @implementation WlrDarwinWindow
+/*
+ * CADisplayLink fires on the main run loop per vsync. Its timestamp/duration are
+ * in the CACurrentMediaTime() (mach, CLOCK_MONOTONIC) domain — timestamp is when
+ * the last frame was displayed, i.e. when the committed frame turned to light.
+ */
+- (void)displayLinkFired:(CADisplayLink *)link API_AVAILABLE(macos(14.0)) {
+	struct darwin_frame_info info = {
+		.when_ns = (int64_t)(link.timestamp * 1000000000.0),
+		.refresh_ns = (int64_t)(link.duration * 1000000000.0),
+		.seq = ++self->vsyncSeq,
+	};
+	(void)write(self->frameFd, &info, sizeof(info));
+}
 @end
 
 /* ---- quit bridge ----------------------------------------------------------
@@ -309,9 +324,11 @@ static int64_t host_to_nsec(uint64_t host) {
 }
 
 /*
- * CVDisplayLink runs on its own thread; per vsync, hand the compositor the
- * timing it needs for the frame clock and presentation feedback. `now` is this
- * vsync — i.e. when the last committed frame turned to light.
+ * CVDisplayLink fallback (macOS < 14). Runs on its own thread; per vsync, hand
+ * the compositor the timing it needs for the frame clock and presentation
+ * feedback. `now` is this vsync — i.e. when the last committed frame turned to
+ * light. On macOS 14+ this is unused; -[WlrDarwinWindow displayLinkFired:]
+ * (CADisplayLink) does the same job.
  */
 static CVReturn display_link_cb(CVDisplayLinkRef link, const CVTimeStamp *now,
 		const CVTimeStamp *out, CVOptionFlags flagsIn, CVOptionFlags *flagsOut,
@@ -378,11 +395,26 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 		win->frameFd = frame_event_fd;
 		win->inputFd = input_event_fd;
 
-		/* Frame clock. TODO: CADisplayLink on macOS 14+ for lower overhead. */
-		CVDisplayLinkCreateWithActiveCGDisplays(&win->displayLink);
-		CVDisplayLinkSetOutputCallback(win->displayLink, display_link_cb,
-			(__bridge void *)win);
-		CVDisplayLinkStart(win->displayLink);
+		/*
+		 * Frame clock. CADisplayLink (macOS 14+) tied to the view's display —
+		 * it follows the window across monitors and fires on the main run loop.
+		 * CVDisplayLink is the fallback on older systems.
+		 */
+		if (@available(macOS 14.0, *)) {
+			CADisplayLink *cadl = [view displayLinkWithTarget:win
+				selector:@selector(displayLinkFired:)];
+			[cadl addToRunLoop:[NSRunLoop currentRunLoop]
+				forMode:NSRunLoopCommonModes];
+			win->caDisplayLink = cadl;
+		} else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+			CVDisplayLinkCreateWithActiveCGDisplays(&win->displayLink);
+			CVDisplayLinkSetOutputCallback(win->displayLink, display_link_cb,
+				(__bridge void *)win);
+			CVDisplayLinkStart(win->displayLink);
+#pragma clang diagnostic pop
+		}
 	});
 	if (!win) {
 		return NULL;
@@ -444,9 +476,15 @@ void darwin_cocoa_window_present(darwin_cocoa_window *handle, const void *data,
 void darwin_cocoa_window_destroy(darwin_cocoa_window *handle) {
 	WlrDarwinWindow *win = (WlrDarwinWindow *)CFBridgingRelease(handle);
 	dispatch_async(dispatch_get_main_queue(), ^{
+		if (@available(macOS 14.0, *)) {
+			[win->caDisplayLink invalidate]; /* also breaks the link->target ref */
+		}
 		if (win->displayLink) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 			CVDisplayLinkStop(win->displayLink);
 			CVDisplayLinkRelease(win->displayLink);
+#pragma clang diagnostic pop
 		}
 		[win->window close];
 	});

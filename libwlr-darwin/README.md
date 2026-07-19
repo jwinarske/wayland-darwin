@@ -27,16 +27,17 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
                                      wl_display_run()       │
                                                             ▼
    compositor ──(dispatch_async/sync to main queue)──► NSWindow / CALayer ops
-   compositor ◄──(socketpair fds)── CVDisplayLink ticks (frames) + input events
+   compositor ◄──(socketpair fds)── display-link ticks (frames) + input events
 ```
 
 - **compositor → main** (window create, present, destroy): marshalled via
   `dispatch_{sync,async}(dispatch_get_main_queue(), …)` in `cocoa.m`.
 - **main → compositor** (frame clock, input): written to per-purpose fds that
   the compositor's `wl_event_loop` reads (`wl_event_loop_add_fd`). The frame
-  clock is a `CVDisplayLink` tick today (CADisplayLink upgrade noted); each tick
-  carries the vsync timestamp + refresh + counter that drive both the `frame`
-  and `present` events.
+  clock is a `CADisplayLink` tick (macOS 14+, tied to the view's display so it
+  follows the window across monitors; `CVDisplayLink` fallback below that). Each
+  tick carries the vsync timestamp + refresh + counter that drive both the
+  `frame` and `present` events.
 
 ## Files
 
@@ -54,7 +55,7 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 | `src/pasteboard.m` | ObjC | NSPasteboard get/set/change-count (main thread) |
 | `src/metal.m` | ObjC (ARC) | Metal device/pipeline, IOSurface render target, solid-rect pass, readback |
 | `src/cocoa.h` / `src/metal.h` | C | the C↔ObjC boundaries |
-| `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer, IOSurface, present, CVDisplayLink, NSEvent capture |
+| `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer, IOSurface, present, CA/CVDisplayLink, NSEvent capture |
 | `example/darwin-smoke.c` | C | minimal compositor: opens a window, renders a colour each frame |
 | `example/tinywl.c` | C | wlroots' reference compositor, adapted to the Darwin backend (Metal renderer) |
 | `example/wl-client-demo.c` | C | minimal Wayland client (xdg-shell + shm) to display in the compositor |
@@ -161,15 +162,16 @@ mirroring the X11 backend's `WLR_X11_OUTPUTS`); a compositor can also call
 
 ## Present timing
 
-Presentation feedback is driven off the `CVDisplayLink`. A buffer commit is
+Presentation feedback is driven off the display link. A buffer commit is
 handed to WindowServer immediately but only turns to light at the next vsync, so
 `output.c` defers the `wlr_output` present event: it records the pending commit
 (and whether it was zero-copy), and on the following display-link tick sends
-`wlr_output_send_present` with the vsync's timestamp (`CVTimeStamp.hostTime`, in
-the `CLOCK_MONOTONIC` domain), refresh interval, and monotonic vsync counter —
-flagged `VSYNC | HW_CLOCK` (plus `ZERO_COPY` for IOSurface buffers). This gives
-`wp_presentation` clients real, hardware-derived timing instead of a synthetic
-stamp. If the display link reports no host time, it falls back to
+`wlr_output_send_present` with the vsync's timestamp (the `CLOCK_MONOTONIC`
+domain — `CADisplayLink.timestamp`, or `CVTimeStamp.hostTime` on the fallback),
+refresh interval, and monotonic vsync counter — flagged `VSYNC | HW_CLOCK` (plus
+`ZERO_COPY` for IOSurface buffers). This gives `wp_presentation` clients real,
+hardware-derived timing instead of a synthetic stamp. If the display link
+reports no host time, it falls back to
 `clock_gettime` and drops the `HW_CLOCK` flag.
 
 ## Quit
@@ -184,7 +186,7 @@ through the normal teardown — instead of AppKit's abrupt process termination.
 
 ## Next
 
-- CADisplayLink (macOS 14+) to replace the deprecated CVDisplayLink.
+- Upstreaming the vendored epoll-shim / libdrm-compat patch sets.
 
 Metal `add_texture` now bakes `wl_output_transform` into the sampled UVs,
 `read_pixels` reads a texture back (screencopy), and IOSurface-backed client
