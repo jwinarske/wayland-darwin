@@ -17,6 +17,9 @@ add_project_arguments('-fobjc-arc', language: 'objc')
 
 wlroots = dependency('wlroots-0.21')
 wayland_server = dependency('wayland-server')
+# renderer.c iterates damage regions (pixman_region32_*); wlroots pulls pixman
+# in only as a private requirement, so link it explicitly.
+pixman = dependency('pixman-1')
 
 frameworks = [
 	'-framework', 'AppKit',
@@ -40,7 +43,7 @@ lib_wlr_darwin = library('wlr-darwin',
 		'src/cocoa.m', 'src/metal.m', 'src/pasteboard.m',
 	],
 	include_directories: inc,
-	dependencies: [wlroots, wayland_server],
+	dependencies: [wlroots, wayland_server, pixman],
 	link_args: frameworks,
 	install: true,
 )
@@ -50,7 +53,7 @@ install_headers('include/wlr-darwin.h')
 wlr_darwin = declare_dependency(
 	link_with: lib_wlr_darwin,
 	include_directories: include_directories('include'),
-	dependencies: [wlroots, wayland_server],
+	dependencies: [wlroots, wayland_server, pixman],
 )
 
 if get_option('examples')
