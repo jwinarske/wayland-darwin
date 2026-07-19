@@ -93,19 +93,32 @@ self-skip on macOS):
 ./wayland-cxx-scanner/build-macos.sh
 ```
 
-Then, in the GUI session with `darwin-tinywl` running (step 4):
+The CPU/shm examples that build on macOS (the GL/Vulkan/SDL3/Skia ones don't).
+Run each in the GUI session, with `darwin-tinywl` already running (step 4):
 
 ```bash
 export DYLD_LIBRARY_PATH="$HOME/wlroots-darwin/prefix/lib"
+export WAYLAND_DISPLAY=wayland-1                 # matches what darwin-tinywl printed
 E=src/wayland-cxx-scanner/build-macos/examples
-WAYLAND_DISPLAY=wayland-1 "$E/minimal/minimal_roundtrip"          # connects + roundtrips
-WAYLAND_DISPLAY=wayland-1 "$E/wayland-info/wayland_info"          # dumps globals
-WAYLAND_DISPLAY=wayland-1 "$E/presentation-shm/presentation_shm" # animated shm window
-WAYLAND_DISPLAY=wayland-1 "$E/key-input/key_input"               # keyboard echo
+
+# — no window (connect / introspect) —
+"$E/minimal/minimal_roundtrip"          # connect + wl_display roundtrip, then exit
+"$E/wayland-info/wayland_info"          # print the compositor's globals
+"$E/ext-data-control/ext-data-control"  # focus-free clipboard CLI (copy/paste)
+
+# — shm windows (composited on the GPU by darwin-tinywl's Metal renderer) —
+"$E/presentation-shm/presentation_shm" # animated spinning wheel + frame timings
+"$E/key-input/key_input"               # keyboard input + key-repeat echo
+"$E/clipboard/clipboard"               # wl_data_device selection (clipboard)
+"$E/text-input/text_input"             # a text-field window
+"$E/xdg-ssd/xdg_ssd"                   # server-side-decoration window
+"$E/agl-presentation-shm/agl_compositor"  # AGL shell background client
+"$E/ivi-presentation-shm/ivi_shell"       # IVI-application client
 ```
 
-These are pure `libwayland-client` C++ programs, composited on the GPU by the
-Metal renderer in `darwin-tinywl`.
+These are pure `libwayland-client` C++ programs — no wlroots — talking to the
+Darwin `wl_display` socket, their shm buffers composited on the GPU by the Metal
+renderer in `darwin-tinywl`.
 
 ## Notes
 
