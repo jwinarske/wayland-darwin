@@ -14,16 +14,26 @@
 /* Opaque handle to a window (NSWindow + NSView + CALayer), owned by cocoa.m. */
 typedef struct darwin_cocoa_window darwin_cocoa_window;
 
+/* Output geometry in backing pixels plus the HiDPI scale (backingScaleFactor). */
+struct darwin_output_geometry {
+	uint32_t width_px;
+	uint32_t height_px;
+	double scale;
+};
+
 /*
- * Create a window of w x h. Runs on the main thread (dispatched + waited on).
+ * Create a window of w x h logical points. Runs on the main thread (dispatched
+ * + waited on). Fills *out_geom with the initial backing-pixel size and scale.
  *
- * frame_event_fd: cocoa.m writes one byte to this fd on every display-link tick
- * (the D6 frame clock); the backend's event loop reads it and calls
- * wlr_output_send_frame(). input_event_fd: cocoa.m writes serialized input
- * events here (the D3 main->compositor bridge).
+ * frame_event_fd: one byte per display-link tick (D6 frame clock).
+ * input_event_fd: serialized input events (D3 main->compositor bridge).
+ * resize_event_fd: cocoa.m writes a struct darwin_output_geometry whenever the
+ * window is resized or its backing scale changes; the backend turns each into a
+ * wlr_output_send_request_state().
  */
 darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
-	int frame_event_fd, int input_event_fd);
+	int frame_event_fd, int input_event_fd, int resize_event_fd,
+	struct darwin_output_geometry *out_geom);
 
 /*
  * Present a mapped CPU pixel buffer to the window's CALayer.

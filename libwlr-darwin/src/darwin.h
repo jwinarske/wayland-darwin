@@ -53,6 +53,10 @@ struct wlr_darwin_output {
 	struct wl_event_source *frame_source;
 	struct wl_event_source *frame_timer;
 	int frame_delay_ms;
+
+	/* NSWindow resize / backing-scale change (cocoa.m -> compositor). */
+	int resize_fd[2];
+	struct wl_event_source *resize_source;
 };
 
 struct wlr_darwin_backend *darwin_backend_from_backend(struct wlr_backend *b);

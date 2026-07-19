@@ -29,7 +29,8 @@
 /* ---- event-capturing view ------------------------------------------------- */
 
 @interface WlrDarwinView : NSView
-@property (assign) int inputFd; /* write end of the main->compositor bridge */
+@property (assign) int inputFd;  /* write end of the main->compositor bridge */
+@property (assign) int resizeFd; /* write end for resize / backing-scale events */
 @property (strong) NSTrackingArea *tracking;
 @end
 
@@ -171,6 +172,34 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 	[self addTrackingArea:self.tracking];
 }
 
+/* Post the current backing-pixel size + scale to the compositor (HiDPI/resize). */
+- (void)postGeometry {
+	if (self.resizeFd < 0) {
+		return;
+	}
+	double scale = self.window ? self.window.backingScaleFactor : 1.0;
+	if (self.layer) {
+		self.layer.contentsScale = scale; /* map pixel IOSurface -> point layer */
+	}
+	NSSize px = [self convertSizeToBacking:self.bounds.size];
+	struct darwin_output_geometry geom = {
+		.width_px = (uint32_t)(px.width + 0.5),
+		.height_px = (uint32_t)(px.height + 0.5),
+		.scale = scale,
+	};
+	(void)write(self.resizeFd, &geom, sizeof(geom));
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+	[super setFrameSize:newSize];
+	[self postGeometry];
+}
+
+- (void)viewDidChangeBackingProperties {
+	[super viewDidChangeBackingProperties];
+	[self postGeometry];
+}
+
 @end
 
 /* ---- window object -------------------------------------------------------- */
@@ -202,10 +231,12 @@ static CVReturn display_link_cb(CVDisplayLinkRef link, const CVTimeStamp *now,
 /* ---- boundary API --------------------------------------------------------- */
 
 darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
-		int frame_event_fd, int input_event_fd) {
+		int frame_event_fd, int input_event_fd, int resize_event_fd,
+		struct darwin_output_geometry *out_geom) {
 	__block WlrDarwinWindow *win = nil;
+	__block struct darwin_output_geometry geom = { w, h, 1.0 };
 	dispatch_sync(dispatch_get_main_queue(), ^{
-		NSRect rect = NSMakeRect(0, 0, w, h);
+		NSRect rect = NSMakeRect(0, 0, w, h); /* content size in points */
 		NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
 			NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
 		NSWindow *nsw = [[NSWindow alloc] initWithContentRect:rect
@@ -215,17 +246,27 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 
 		WlrDarwinView *view = [[WlrDarwinView alloc] initWithFrame:rect];
 		view.inputFd = input_event_fd;
+		view.resizeFd = -1; /* suppress resize posts until the output exists */
 		view.wantsLayer = YES;
 		nsw.contentView = view;
 		nsw.acceptsMouseMovedEvents = YES;
 
+		double scale = nsw.backingScaleFactor;
 		CALayer *layer = view.layer;
 		layer.contentsGravity = kCAGravityResize;
+		layer.contentsScale = scale;
 		layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
 
 		[nsw center];
 		[nsw makeKeyAndOrderFront:nil];
 		[nsw makeFirstResponder:view];
+
+		/* Initial backing-pixel geometry reported back to the caller. */
+		NSSize px = [view convertSizeToBacking:view.bounds.size];
+		geom.width_px = (uint32_t)(px.width + 0.5);
+		geom.height_px = (uint32_t)(px.height + 0.5);
+		geom.scale = scale;
+		view.resizeFd = resize_event_fd; /* now live for subsequent resizes */
 
 		win = [WlrDarwinWindow new];
 		win->window = nsw;
@@ -242,6 +283,9 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 	});
 	if (!win) {
 		return NULL;
+	}
+	if (out_geom) {
+		*out_geom = geom;
 	}
 	return (darwin_cocoa_window *)CFBridgingRetain(win);
 }

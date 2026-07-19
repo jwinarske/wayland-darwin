@@ -120,4 +120,9 @@ composited green texture, read back from the IOSurface.
 
 - Metal `add_texture` transforms (`wl_output_transform`) and damage-region
   texture upload; zero-copy IOSurface-wrap for IOSurface-backed client buffers.
-- Window resize → `wlr_output_send_request_state`; multi-output; `backingScaleFactor`.
+- Multi-output (more than one NSWindow); hardware cursor CALayer fast path.
+
+HiDPI (backingScaleFactor → output scale, backing-pixel mode) and live window
+resize (NSWindow resize / display change → `wlr_output_send_request_state`) are
+handled: `cocoa.m` posts the backing size+scale on `setFrameSize` /
+`viewDidChangeBackingProperties`, and `output.c` turns each into a state request.

@@ -18,7 +18,8 @@ static const uint32_t SUPPORTED_OUTPUT_STATE =
 	WLR_OUTPUT_STATE_BACKEND_OPTIONAL |
 	WLR_OUTPUT_STATE_BUFFER |
 	WLR_OUTPUT_STATE_ENABLED |
-	WLR_OUTPUT_STATE_MODE;
+	WLR_OUTPUT_STATE_MODE |
+	WLR_OUTPUT_STATE_SCALE;
 
 static struct wlr_darwin_output *darwin_output_from_output(
 		struct wlr_output *wlr_output) {
@@ -100,14 +101,19 @@ static void output_destroy(struct wlr_output *wlr_output) {
 	if (output->frame_source) {
 		wl_event_source_remove(output->frame_source);
 	}
+	if (output->resize_source) {
+		wl_event_source_remove(output->resize_source);
+	}
 	if (output->frame_timer) {
 		wl_event_source_remove(output->frame_timer);
 	}
-	if (output->frame_fd[0] >= 0) {
-		close(output->frame_fd[0]);
-	}
-	if (output->frame_fd[1] >= 0) {
-		close(output->frame_fd[1]);
+	for (int i = 0; i < 2; i++) {
+		if (output->frame_fd[i] >= 0) {
+			close(output->frame_fd[i]);
+		}
+		if (output->resize_fd[i] >= 0) {
+			close(output->resize_fd[i]);
+		}
 	}
 
 	wl_list_remove(&output->link);
@@ -127,7 +133,7 @@ bool wlr_output_is_darwin(const struct wlr_output *wlr_output) {
 	return wlr_output->impl == &darwin_output_impl;
 }
 
-/* D6 frame clock: cocoa.m's CADisplayLink writes a byte per tick. */
+/* D6 frame clock: cocoa.m's CVDisplayLink writes a byte per tick. */
 static int handle_frame(int fd, uint32_t mask, void *data) {
 	struct wlr_darwin_output *output = data;
 	char buf[64];
@@ -136,6 +142,30 @@ static int handle_frame(int fd, uint32_t mask, void *data) {
 		n = read(fd, buf, sizeof(buf));
 	} while (n == (ssize_t)sizeof(buf));
 	wlr_output_send_frame(&output->wlr_output);
+	return 0;
+}
+
+/* NSWindow resize / backing-scale change: request the new mode + scale. */
+static int handle_resize(int fd, uint32_t mask, void *data) {
+	struct wlr_darwin_output *output = data;
+	struct darwin_output_geometry geom, last;
+	bool have = false;
+	/* Drain all pending records; the most recent wins (coalesce live resize). */
+	while (read(fd, &geom, sizeof(geom)) == (ssize_t)sizeof(geom)) {
+		last = geom;
+		have = true;
+	}
+	if (!have || last.width_px == 0 || last.height_px == 0) {
+		return 0;
+	}
+
+	struct wlr_output_state state;
+	wlr_output_state_init(&state);
+	wlr_output_state_set_custom_mode(&state, last.width_px, last.height_px,
+		DARWIN_DEFAULT_REFRESH);
+	wlr_output_state_set_scale(&state, (float)last.scale);
+	wlr_output_send_request_state(&output->wlr_output, &state);
+	wlr_output_state_finish(&state);
 	return 0;
 }
 
@@ -148,31 +178,34 @@ struct wlr_output *darwin_add_output(struct wlr_darwin_backend *backend,
 	}
 	output->backend = backend;
 	output->frame_fd[0] = output->frame_fd[1] = -1;
+	output->resize_fd[0] = output->resize_fd[1] = -1;
 
-	/* Per-output frame-clock pipe fed by CADisplayLink in cocoa.m. */
-	if (socketpair(AF_UNIX, SOCK_STREAM, 0, output->frame_fd) != 0) {
+	/* Per-output frame-clock pipe fed by CVDisplayLink in cocoa.m. */
+	if (socketpair(AF_UNIX, SOCK_STREAM, 0, output->frame_fd) != 0 ||
+			socketpair(AF_UNIX, SOCK_STREAM, 0, output->resize_fd) != 0) {
 		wlr_log_errno(WLR_ERROR, "output socketpair failed");
-		free(output);
-		return NULL;
+		goto err;
 	}
 	output->frame_source = wl_event_loop_add_fd(backend->loop,
 		output->frame_fd[0], WL_EVENT_READABLE, handle_frame, output);
+	output->resize_source = wl_event_loop_add_fd(backend->loop,
+		output->resize_fd[0], WL_EVENT_READABLE, handle_resize, output);
 
+	struct darwin_output_geometry geom = { .width_px = width,
+		.height_px = height, .scale = 1.0 };
 	output->window = darwin_cocoa_window_create(width, height,
-		output->frame_fd[1], backend->event_fd[1]);
+		output->frame_fd[1], backend->event_fd[1], output->resize_fd[1], &geom);
 	if (!output->window) {
 		wlr_log(WLR_ERROR, "Failed to create Cocoa window");
-		wl_event_source_remove(output->frame_source);
-		close(output->frame_fd[0]);
-		close(output->frame_fd[1]);
-		free(output);
-		return NULL;
+		goto err;
 	}
 
+	/* Report the backing-pixel resolution as the mode and the HiDPI scale. */
 	struct wlr_output_state state;
 	wlr_output_state_init(&state);
-	wlr_output_state_set_custom_mode(&state, width, height,
+	wlr_output_state_set_custom_mode(&state, geom.width_px, geom.height_px,
 		DARWIN_DEFAULT_REFRESH);
+	wlr_output_state_set_scale(&state, (float)geom.scale);
 
 	wlr_output_init(&output->wlr_output, &backend->backend, &darwin_output_impl,
 		backend->loop, &state);
@@ -189,4 +222,22 @@ struct wlr_output *darwin_add_output(struct wlr_darwin_backend *backend,
 			&output->wlr_output);
 	}
 	return &output->wlr_output;
+
+err:
+	if (output->frame_source) {
+		wl_event_source_remove(output->frame_source);
+	}
+	if (output->resize_source) {
+		wl_event_source_remove(output->resize_source);
+	}
+	for (int i = 0; i < 2; i++) {
+		if (output->frame_fd[i] >= 0) {
+			close(output->frame_fd[i]);
+		}
+		if (output->resize_fd[i] >= 0) {
+			close(output->resize_fd[i]);
+		}
+	}
+	free(output);
+	return NULL;
 }
