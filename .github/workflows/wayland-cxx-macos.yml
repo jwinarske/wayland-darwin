@@ -1,0 +1,59 @@
+name: wayland-cxx-scanner on macOS
+
+# Builds the wayland-cxx-scanner C++ bindings generator and its CPU/shm example
+# clients on macOS against the wayland-darwin libwayland. GL/Vulkan/SDL3/Skia
+# examples self-skip. Compile+link only; running the examples needs a
+# compositor + GUI session.
+
+on:
+  push:
+    paths:
+      - 'wayland-cxx-scanner/**'
+      - 'wayland-darwin/**'
+      - '.github/workflows/wayland-cxx-macos.yml'
+  pull_request:
+    paths:
+      - 'wayland-cxx-scanner/**'
+      - 'wayland-darwin/**'
+      - '.github/workflows/wayland-cxx-macos.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: wayland-cxx-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: "1"
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Homebrew deps
+        run: brew install cmake ninja meson pkgconf libffi expat libxml2 libxkbcommon pugixml
+
+      - name: Build wayland-cxx-scanner
+        env:
+          PREFIX: ${{ github.workspace }}/prefix
+          SRC: ${{ github.workspace }}/src
+        run: ./wayland-cxx-scanner/build-macos.sh
+
+      - name: Upload meson logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: wayland-cxx-meson-logs-${{ matrix.os }}
+          path: |
+            src/wayland-cxx-scanner/build-macos/meson-logs/
+          if-no-files-found: ignore
