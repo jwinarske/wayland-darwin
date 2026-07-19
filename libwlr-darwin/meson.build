@@ -36,7 +36,8 @@ inc = include_directories('include', 'src', '../wlroots-darwin/compat')
 lib_wlr_darwin = library('wlr-darwin',
 	[
 		'src/backend.c', 'src/output.c', 'src/allocator.c', 'src/keymap.c',
-		'src/renderer.c', 'src/cocoa.m', 'src/metal.m',
+		'src/renderer.c', 'src/data.c',
+		'src/cocoa.m', 'src/metal.m', 'src/pasteboard.m',
 	],
 	include_directories: inc,
 	dependencies: [wlroots, wayland_server],

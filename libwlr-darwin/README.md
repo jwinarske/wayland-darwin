@@ -49,6 +49,8 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 | `src/keymap.c` | C | kVK → evdev key-code table (the single maintained pivot) |
 | `src/input.h` | C | main→compositor input wire format |
 | `src/renderer.c` | C | Metal renderer: `wlr_renderer_impl` + `wlr_render_pass_impl` + format negotiation |
+| `src/data.c` | C | NSPasteboard ↔ seat-selection clipboard bridge |
+| `src/pasteboard.m` | ObjC | NSPasteboard get/set/change-count (main thread) |
 | `src/metal.m` | ObjC (ARC) | Metal device/pipeline, IOSurface render target, solid-rect pass, readback |
 | `src/cocoa.h` / `src/metal.h` | C | the C↔ObjC boundaries |
 | `src/cocoa.m` | ObjC (ARC) | NSApp trampoline, NSWindow/CALayer, IOSurface, present, CVDisplayLink, NSEvent capture |
@@ -115,6 +117,13 @@ texturing**: `texture_from_buffer` uploads a client's pixels to an `MTLTexture`,
 and `add_texture` samples it onto a quad (src/dst boxes, alpha, nearest/bilinear)
 via a textured pipeline. `metal-smoke` verifies both — a red rect and a
 composited green texture, read back from the IOSurface.
+
+## Clipboard
+
+`wlr_darwin_data_bridge_create(seat)` bridges the seat selection to the macOS
+system clipboard (text): copying in a Wayland client writes NSPasteboard, and a
+macOS copy is published as the Wayland selection (polled via the pasteboard
+change count, with loop-avoidance). `darwin-tinywl` creates it after the seat.
 
 ## Next
 

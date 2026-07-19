@@ -1020,6 +1020,8 @@ static int compositor_main(void *data) {
 	server.new_input.notify = server_new_input;
 	wl_signal_add(&server.backend->events.new_input, &server.new_input);
 	server.seat = wlr_seat_create(server.wl_display, "seat0");
+	/* Bridge the seat selection to the macOS system clipboard. */
+	wlr_darwin_data_bridge_create(server.seat);
 	server.request_cursor.notify = seat_request_cursor;
 	wl_signal_add(&server.seat->events.request_set_cursor,
 			&server.request_cursor);

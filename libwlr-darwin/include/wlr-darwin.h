@@ -65,4 +65,15 @@ bool wlr_backend_is_darwin(const struct wlr_backend *backend);
 bool wlr_output_is_darwin(const struct wlr_output *output);
 bool wlr_buffer_is_darwin(const struct wlr_buffer *buffer);
 
+/**
+ * Bridge the macOS system clipboard (NSPasteboard) to the seat's selection:
+ * text copied in a Wayland client becomes available to macOS apps, and vice
+ * versa. Create it once, after the wlr_seat; it is torn down with the seat.
+ * Returns NULL on failure.
+ */
+struct wlr_seat;
+struct wlr_darwin_data_bridge;
+struct wlr_darwin_data_bridge *wlr_darwin_data_bridge_create(struct wlr_seat *seat);
+void wlr_darwin_data_bridge_destroy(struct wlr_darwin_data_bridge *bridge);
+
 #endif
