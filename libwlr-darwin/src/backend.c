@@ -83,6 +83,37 @@ static void dispatch_input_event(struct wlr_darwin_backend *backend,
 		wl_signal_emit_mutable(&backend->pointer.events.frame, &backend->pointer);
 		break;
 	}
+	case DARWIN_INPUT_PINCH_BEGIN:; {
+		struct wlr_pointer_pinch_begin_event begin = {
+			.pointer = &backend->pointer,
+			.time_msec = ev->time_msec,
+			.fingers = ev->code,
+		};
+		wl_signal_emit_mutable(&backend->pointer.events.pinch_begin, &begin);
+		break;
+	}
+	case DARWIN_INPUT_PINCH_UPDATE:; {
+		struct wlr_pointer_pinch_update_event update = {
+			.pointer = &backend->pointer,
+			.time_msec = ev->time_msec,
+			.fingers = ev->code,
+			.dx = ev->x,
+			.dy = ev->y,
+			.scale = ev->f0,
+			.rotation = ev->f1,
+		};
+		wl_signal_emit_mutable(&backend->pointer.events.pinch_update, &update);
+		break;
+	}
+	case DARWIN_INPUT_PINCH_END:; {
+		struct wlr_pointer_pinch_end_event end = {
+			.pointer = &backend->pointer,
+			.time_msec = ev->time_msec,
+			.cancelled = false,
+		};
+		wl_signal_emit_mutable(&backend->pointer.events.pinch_end, &end);
+		break;
+	}
 	}
 }
 

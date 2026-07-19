@@ -18,6 +18,7 @@
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_pointer.h>
+#include <wlr/types/wlr_pointer_gestures_v1.h>
 #include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_subcompositor.h>
@@ -57,6 +58,11 @@ struct tinywl_server {
 	struct wl_listener cursor_button;
 	struct wl_listener cursor_axis;
 	struct wl_listener cursor_frame;
+
+	struct wlr_pointer_gestures_v1 *pointer_gestures;
+	struct wl_listener cursor_pinch_begin;
+	struct wl_listener cursor_pinch_update;
+	struct wl_listener cursor_pinch_end;
 
 	struct wlr_seat *seat;
 	struct wl_listener new_input;
@@ -575,6 +581,30 @@ static void server_cursor_frame(struct wl_listener *listener, void *data) {
 	wlr_seat_pointer_notify_frame(server->seat);
 }
 
+/* Forward pointer pinch gestures (from the Darwin backend) to focused clients. */
+static void server_cursor_pinch_begin(struct wl_listener *listener, void *data) {
+	struct tinywl_server *server =
+		wl_container_of(listener, server, cursor_pinch_begin);
+	struct wlr_pointer_pinch_begin_event *event = data;
+	wlr_pointer_gestures_v1_send_pinch_begin(server->pointer_gestures,
+		server->seat, event->time_msec, event->fingers);
+}
+static void server_cursor_pinch_update(struct wl_listener *listener, void *data) {
+	struct tinywl_server *server =
+		wl_container_of(listener, server, cursor_pinch_update);
+	struct wlr_pointer_pinch_update_event *event = data;
+	wlr_pointer_gestures_v1_send_pinch_update(server->pointer_gestures,
+		server->seat, event->time_msec, event->dx, event->dy, event->scale,
+		event->rotation);
+}
+static void server_cursor_pinch_end(struct wl_listener *listener, void *data) {
+	struct tinywl_server *server =
+		wl_container_of(listener, server, cursor_pinch_end);
+	struct wlr_pointer_pinch_end_event *event = data;
+	wlr_pointer_gestures_v1_send_pinch_end(server->pointer_gestures,
+		server->seat, event->time_msec, event->cancelled);
+}
+
 static void output_frame(struct wl_listener *listener, void *data) {
 	/* This function is called every time an output is ready to display a frame,
 	 * generally at the output's refresh rate (e.g. 60Hz). */
@@ -1009,6 +1039,15 @@ static int compositor_main(void *data) {
 	wl_signal_add(&server.cursor->events.axis, &server.cursor_axis);
 	server.cursor_frame.notify = server_cursor_frame;
 	wl_signal_add(&server.cursor->events.frame, &server.cursor_frame);
+
+	/* Pointer gestures (pinch) from the Darwin backend -> clients. */
+	server.pointer_gestures = wlr_pointer_gestures_v1_create(server.wl_display);
+	server.cursor_pinch_begin.notify = server_cursor_pinch_begin;
+	wl_signal_add(&server.cursor->events.pinch_begin, &server.cursor_pinch_begin);
+	server.cursor_pinch_update.notify = server_cursor_pinch_update;
+	wl_signal_add(&server.cursor->events.pinch_update, &server.cursor_pinch_update);
+	server.cursor_pinch_end.notify = server_cursor_pinch_end;
+	wl_signal_add(&server.cursor->events.pinch_end, &server.cursor_pinch_end);
 
 	/*
 	 * Configures a seat, which is a single "seat" at which a user sits and

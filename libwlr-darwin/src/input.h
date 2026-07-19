@@ -13,10 +13,13 @@
 #include <stdint.h>
 
 enum darwin_input_type {
-	DARWIN_INPUT_KEY = 1,    // code = evdev keycode, state = pressed
-	DARWIN_INPUT_MOTION_ABS, // x, y in [0,1] across the output
-	DARWIN_INPUT_BUTTON,     // code = evdev BTN_*, state = pressed
-	DARWIN_INPUT_AXIS,       // state = orientation, aux = source, x = delta
+	DARWIN_INPUT_KEY = 1,     // code = evdev keycode, state = pressed
+	DARWIN_INPUT_MOTION_ABS,  // x, y in [0,1] across the output
+	DARWIN_INPUT_BUTTON,      // code = evdev BTN_*, state = pressed
+	DARWIN_INPUT_AXIS,        // state = orientation, aux = source, x = delta
+	DARWIN_INPUT_PINCH_BEGIN, // code = fingers
+	DARWIN_INPUT_PINCH_UPDATE,// x,y = dx,dy; f0 = scale (abs); f1 = rotation (deg)
+	DARWIN_INPUT_PINCH_END,
 };
 
 struct darwin_input_event {
@@ -27,6 +30,7 @@ struct darwin_input_event {
 	uint32_t aux;
 	int32_t discrete;
 	double x, y;
+	double f0, f1; // pinch scale / rotation (and future gesture params)
 };
 
 /*

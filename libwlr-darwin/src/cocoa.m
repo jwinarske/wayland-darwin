@@ -32,6 +32,8 @@
 @property (assign) int inputFd;  /* write end of the main->compositor bridge */
 @property (assign) int resizeFd; /* write end for resize / backing-scale events */
 @property (strong) NSTrackingArea *tracking;
+@property (assign) BOOL pinchActive;
+@property (assign) double pinchScale; /* accumulated magnification */
 @end
 
 @implementation WlrDarwinView
@@ -158,6 +160,47 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 		};
 		[self emit:ev];
 	}
+}
+
+/* -- gestures: magnify + rotate -> Wayland pinch (pointer-gestures-v1) -- */
+
+- (void)handleGesturePhase:(NSEventPhase)phase scaleDelta:(double)ds
+		rotationDelta:(double)dr time:(uint32_t)t {
+	if (phase & NSEventPhaseBegan) {
+		if (!self.pinchActive) {
+			self.pinchActive = YES;
+			self.pinchScale = 0.0;
+			struct darwin_input_event ev = {
+				.type = DARWIN_INPUT_PINCH_BEGIN, .time_msec = t, .code = 2 };
+			[self emit:ev];
+		}
+	}
+	if (phase & (NSEventPhaseBegan | NSEventPhaseChanged)) {
+		self.pinchScale += ds;
+		struct darwin_input_event ev = {
+			.type = DARWIN_INPUT_PINCH_UPDATE, .time_msec = t, .code = 2,
+			.f0 = 1.0 + self.pinchScale, .f1 = dr };
+		[self emit:ev];
+	}
+	if (phase & (NSEventPhaseEnded | NSEventPhaseCancelled)) {
+		if (self.pinchActive) {
+			self.pinchActive = NO;
+			struct darwin_input_event ev = {
+				.type = DARWIN_INPUT_PINCH_END, .time_msec = t };
+			[self emit:ev];
+		}
+	}
+}
+
+- (void)magnifyWithEvent:(NSEvent *)e {
+	[self handleGesturePhase:e.phase scaleDelta:e.magnification
+		rotationDelta:0 time:event_time_msec(e)];
+}
+
+- (void)rotateWithEvent:(NSEvent *)e {
+	/* NSEvent.rotation is counter-clockwise degrees; Wayland is clockwise. */
+	[self handleGesturePhase:e.phase scaleDelta:0
+		rotationDelta:-e.rotation time:event_time_msec(e)];
 }
 
 - (void)updateTrackingAreas {

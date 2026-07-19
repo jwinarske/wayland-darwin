@@ -100,8 +100,13 @@ the main→compositor fd; the backend decodes them into `wlr_keyboard` /
 - **Pointer** — absolute motion (window coords normalized to the output),
   buttons (`BTN_LEFT/RIGHT/MIDDLE`), and scroll: precise (trackpad) → FINGER
   axis source, otherwise WHEEL with discrete steps.
-- NSTouch/gestures are not yet surfaced (indirect touch must **not** become
-  `wlr_touch`); pointer-gesture mapping is a later addition.
+- **Gestures** — `magnifyWithEvent`/`rotateWithEvent` map to a Wayland pinch
+  (`pointer-gestures-v1`): scale from magnification, rotation from rotate
+  (sign-flipped to clockwise). `darwin-tinywl` creates the gestures global and
+  forwards `wlr_cursor` pinch events to clients.
+- NSTouch on trackpads stays indirect touch (feeds scroll/gestures); it must
+  **not** become `wlr_touch`. macOS has no continuous 3-finger swipe event that
+  maps cleanly to Wayland swipe, so only pinch is surfaced for now.
 
 ## Metal renderer (accelerated path)
 
