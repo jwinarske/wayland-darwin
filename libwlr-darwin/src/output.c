@@ -92,6 +92,49 @@ static bool output_commit(struct wlr_output *wlr_output,
 	return true;
 }
 
+/*
+ * Hardware cursor: hand the cursor buffer to a dedicated overlay CALayer
+ * (cocoa.m) instead of compositing it into the frame, so cursor motion never
+ * redraws the scene. Zero-copy for our own IOSurface buffers; copy fallback for
+ * foreign ones. hotspot_x/y and the position are in output backing pixels.
+ */
+static bool output_set_cursor(struct wlr_output *wlr_output,
+		struct wlr_buffer *buffer, int hotspot_x, int hotspot_y) {
+	struct wlr_darwin_output *output = darwin_output_from_output(wlr_output);
+
+	if (buffer == NULL) {
+		darwin_cocoa_window_set_cursor_surface(output->window, NULL,
+			0, 0, 0, 0);
+		return true;
+	}
+
+	darwin_iosurface *surface = darwin_buffer_get_iosurface(buffer);
+	if (surface != NULL) {
+		darwin_cocoa_window_set_cursor_surface(output->window, surface,
+			buffer->width, buffer->height, hotspot_x, hotspot_y);
+		return true;
+	}
+
+	void *data;
+	uint32_t format;
+	size_t stride;
+	if (!wlr_buffer_begin_data_ptr_access(buffer,
+			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
+		wlr_log(WLR_ERROR, "Darwin cursor: buffer is not CPU-readable");
+		return false;
+	}
+	darwin_cocoa_window_set_cursor_pixels(output->window, data, buffer->width,
+		buffer->height, (int)stride, format, hotspot_x, hotspot_y);
+	wlr_buffer_end_data_ptr_access(buffer);
+	return true;
+}
+
+static bool output_move_cursor(struct wlr_output *wlr_output, int x, int y) {
+	struct wlr_darwin_output *output = darwin_output_from_output(wlr_output);
+	darwin_cocoa_window_move_cursor(output->window, x, y);
+	return true;
+}
+
 static void output_destroy(struct wlr_output *wlr_output) {
 	struct wlr_darwin_output *output = darwin_output_from_output(wlr_output);
 
@@ -125,8 +168,8 @@ const struct wlr_output_impl darwin_output_impl = {
 	.destroy = output_destroy,
 	.test = output_test,
 	.commit = output_commit,
-	// set_cursor/move_cursor unimplemented in MVP: wlroots composites the
-	// cursor into the frame (D1). A CALayer hardware cursor is a later fast path.
+	.set_cursor = output_set_cursor,
+	.move_cursor = output_move_cursor,
 };
 
 bool wlr_output_is_darwin(const struct wlr_output *wlr_output) {

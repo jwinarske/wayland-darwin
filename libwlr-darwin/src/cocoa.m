@@ -252,9 +252,15 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 	NSWindow *window;
 	WlrDarwinView *view;
 	CALayer *layer;
+	CALayer *cursorLayer;  /* overlay above content; nil until first set_cursor */
 	CVDisplayLinkRef displayLink;
 	int frameFd;  /* write end: one byte per display tick (D6) */
 	int inputFd;  /* write end: serialized input events (D3/W5) */
+	/* Hardware cursor state (main-thread only). Hotspot/size in buffer pixels; */
+	/* position in output backing pixels. */
+	int cursorHotspotX, cursorHotspotY;
+	int cursorW, cursorH;
+	int cursorX, cursorY;
 }
 @end
 
@@ -333,18 +339,9 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 	return (darwin_cocoa_window *)CFBridgingRetain(win);
 }
 
-void darwin_cocoa_window_present(darwin_cocoa_window *handle, const void *data,
-		uint32_t width, uint32_t height, uint32_t stride, uint32_t drm_format) {
-	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)handle;
-
-	/*
-	 * MVP software present: copy the mapped pixels into a CGImage now (the
-	 * buffer mapping is only valid for the duration of this call) and assign it
-	 * to the layer on the main thread.
-	 *
-	 * TODO(W4): the IOSurface allocator makes this zero-copy — assign the
-	 * IOSurface-backed image directly to CALayer.contents with no copy.
-	 */
+/* Copy mapped pixels into a CGImage (LINEAR BGRA/XRGB only). Caller releases. */
+static CGImageRef make_cgimage(const void *data, uint32_t width, uint32_t height,
+		uint32_t stride, uint32_t drm_format) {
 	CGBitmapInfo info;
 	switch (drm_format) {
 	case DARWIN_DRM_FORMAT_XRGB8888:
@@ -354,7 +351,7 @@ void darwin_cocoa_window_present(darwin_cocoa_window *handle, const void *data,
 		info = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
 		break;
 	default:
-		return; /* only LINEAR BGRA/XRGB handled for now */
+		return NULL; /* only LINEAR BGRA/XRGB handled for now */
 	}
 
 	CFDataRef pixels = CFDataCreate(NULL, data, (CFIndex)(stride * height));
@@ -365,6 +362,21 @@ void darwin_cocoa_window_present(darwin_cocoa_window *handle, const void *data,
 	CGColorSpaceRelease(cs);
 	CGDataProviderRelease(provider);
 	CFRelease(pixels);
+	return image;
+}
+
+void darwin_cocoa_window_present(darwin_cocoa_window *handle, const void *data,
+		uint32_t width, uint32_t height, uint32_t stride, uint32_t drm_format) {
+	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)handle;
+
+	/*
+	 * Software present: copy the mapped pixels into a CGImage now (the buffer
+	 * mapping is only valid for the duration of this call) and assign it to the
+	 * layer on the main thread. The zero-copy path
+	 * (darwin_cocoa_window_present_iosurface) avoids this copy for our own
+	 * IOSurface-backed buffers.
+	 */
+	CGImageRef image = make_cgimage(data, width, height, stride, drm_format);
 	if (!image) {
 		return;
 	}
@@ -473,6 +485,108 @@ void darwin_cocoa_window_present_iosurface(darwin_cocoa_window *handle,
 	dispatch_async(dispatch_get_main_queue(), ^{
 		win->layer.contents = (__bridge id)ref;
 		CFRelease(ref);
+	});
+}
+
+/* ---- hardware cursor (overlay CALayer) ------------------------------------
+ *
+ * The cursor is a sublayer of the content layer. Because the content view is
+ * flipped (isFlipped == YES), the backing layer's sublayers use a top-left
+ * origin and render contents upright — the same convention as the primary
+ * IOSurface — so no manual Y flip is needed. All cursor mutations run on the
+ * main thread inside an action-disabled CATransaction, so repositioning is
+ * instantaneous (no implicit move animation).
+ *
+ * Must be called on the main thread.
+ */
+static void cursor_ensure_layer(WlrDarwinWindow *win) {
+	if (win->cursorLayer != nil) {
+		return;
+	}
+	CALayer *c = [CALayer layer];
+	c.contentsGravity = kCAGravityResize;
+	[win->layer addSublayer:c]; /* sublayers composite above the layer's contents */
+	win->cursorLayer = c;
+}
+
+/* Position the cursor layer from the last hotspot/size/position. Main thread. */
+static void cursor_reposition(WlrDarwinWindow *win) {
+	if (win->cursorLayer == nil) {
+		return;
+	}
+	CGFloat scale = win->layer.contentsScale;
+	if (scale <= 0.0) {
+		scale = 1.0;
+	}
+	win->cursorLayer.contentsScale = scale;
+	win->cursorLayer.frame = CGRectMake(
+		(win->cursorX - win->cursorHotspotX) / scale,
+		(win->cursorY - win->cursorHotspotY) / scale,
+		win->cursorW / scale, win->cursorH / scale);
+}
+
+void darwin_cocoa_window_set_cursor_surface(darwin_cocoa_window *handle,
+		darwin_iosurface *surface, int width, int height,
+		int hotspot_x, int hotspot_y) {
+	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)handle;
+	IOSurfaceRef ref = surface != NULL ? surface->ref : NULL;
+	if (ref != NULL) {
+		CFRetain(ref); /* hold across the async hand-off */
+	}
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		if (ref == NULL) {
+			win->cursorLayer.hidden = YES; /* no-op if never created */
+		} else {
+			cursor_ensure_layer(win);
+			win->cursorHotspotX = hotspot_x;
+			win->cursorHotspotY = hotspot_y;
+			win->cursorW = width;
+			win->cursorH = height;
+			win->cursorLayer.contents = (__bridge id)ref;
+			win->cursorLayer.hidden = NO;
+			cursor_reposition(win);
+			CFRelease(ref);
+		}
+		[CATransaction commit];
+	});
+}
+
+void darwin_cocoa_window_set_cursor_pixels(darwin_cocoa_window *handle,
+		const void *data, int width, int height, int stride,
+		uint32_t drm_format, int hotspot_x, int hotspot_y) {
+	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)handle;
+	CGImageRef image = make_cgimage(data, width, height, (uint32_t)stride,
+		drm_format);
+	if (image == NULL) {
+		return;
+	}
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		cursor_ensure_layer(win);
+		win->cursorHotspotX = hotspot_x;
+		win->cursorHotspotY = hotspot_y;
+		win->cursorW = width;
+		win->cursorH = height;
+		win->cursorLayer.contents = (__bridge id)image;
+		win->cursorLayer.hidden = NO;
+		cursor_reposition(win);
+		[CATransaction commit];
+		CGImageRelease(image);
+	});
+}
+
+void darwin_cocoa_window_move_cursor(darwin_cocoa_window *handle, int x, int y) {
+	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)handle;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		win->cursorX = x;
+		win->cursorY = y;
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		cursor_reposition(win);
+		[CATransaction commit];
 	});
 }
 

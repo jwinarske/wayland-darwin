@@ -44,7 +44,7 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
 | `include/wlr-darwin.h` | C | public API: `wlr_darwin_application_run`, `wlr_darwin_backend_create`, `wlr_darwin_add_output` |
 | `src/darwin.h` | C | internal backend/output structs |
 | `src/backend.c` | C | `wlr_backend_impl` + one virtual keyboard/pointer + input-record decode → wlr events |
-| `src/output.c` | C | `wlr_output_impl` (test/commit/destroy) + present + frame clock |
+| `src/output.c` | C | `wlr_output_impl` (test/commit/destroy) + present + frame clock + hardware cursor |
 | `src/allocator.c` | C | IOSurface allocator: `wlr_allocator_interface` + `wlr_buffer_impl` |
 | `src/keymap.c` | C | kVK → evdev key-code table (the single maintained pivot) |
 | `src/input.h` | C | main→compositor input wire format |
@@ -135,9 +135,21 @@ system clipboard (text): copying in a Wayland client writes NSPasteboard, and a
 macOS copy is published as the Wayland selection (polled via the pasteboard
 change count, with loop-avoidance). `darwin-tinywl` creates it after the seat.
 
+## Cursor
+
+The output implements a **hardware cursor** (`set_cursor` / `move_cursor`): the
+cursor image lives on its own `CALayer` above the content layer, so wlroots
+keeps it off the primary buffer and moving it only repositions that layer — the
+scene is never recomposited. Our own IOSurface cursor buffers are assigned to
+the layer zero-copy; foreign buffers take a `CGImage` copy. Because the content
+view is flipped, the overlay uses the same top-left, upright IOSurface
+convention as the primary buffer (no manual Y flip). Reposition/upload run in an
+action-disabled `CATransaction`, so the cursor tracks the pointer without
+implicit animation.
+
 ## Next
 
-- Multi-output (more than one NSWindow); hardware cursor CALayer fast path.
+- Multi-output (more than one NSWindow).
 - Display-link present timing / frame-completion feedback.
 
 Metal `add_texture` now bakes `wl_output_transform` into the sampled UVs,

@@ -75,4 +75,26 @@ void *darwin_iosurface_ref(darwin_iosurface *surface);
 void darwin_cocoa_window_present_iosurface(darwin_cocoa_window *win,
 	darwin_iosurface *surface);
 
+/* ---- hardware cursor (overlay CALayer) ------------------------------------ */
+
+/*
+ * Hardware-cursor fast path: the cursor lives on its own CALayer above the
+ * content layer, so moving it only repositions that layer — the scene is never
+ * recomposited. All coordinates are in output backing pixels (top-left origin,
+ * matching the flipped content view); hotspot and size are in cursor-buffer
+ * pixels.
+ *
+ * set_cursor_surface: zero-copy — the IOSurface becomes the cursor layer's
+ *   contents. A NULL surface hides the cursor.
+ * set_cursor_pixels: copy path for foreign (non-IOSurface) cursor buffers.
+ * move_cursor: reposition only (no redraw).
+ */
+void darwin_cocoa_window_set_cursor_surface(darwin_cocoa_window *win,
+	darwin_iosurface *surface, int width, int height,
+	int hotspot_x, int hotspot_y);
+void darwin_cocoa_window_set_cursor_pixels(darwin_cocoa_window *win,
+	const void *data, int width, int height, int stride, uint32_t drm_format,
+	int hotspot_x, int hotspot_y);
+void darwin_cocoa_window_move_cursor(darwin_cocoa_window *win, int x, int y);
+
 #endif
