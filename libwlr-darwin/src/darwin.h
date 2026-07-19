@@ -53,14 +53,23 @@ struct wlr_darwin_output {
 	size_t input_buf_len;
 
 	/*
-	 * Frame clock. The real clock is CADisplayLink in cocoa.m writing to
-	 * frame_fd[1]; frame_source (on frame_fd[0]) then calls send_frame. A
-	 * plain timer is kept as a debug fallback.
+	 * Frame clock. The real clock is CADisplayLink in cocoa.m writing a
+	 * struct darwin_frame_info to frame_fd[1]; frame_source (on frame_fd[0])
+	 * then sends the frame + presentation-feedback events. A plain timer is
+	 * kept as a debug fallback.
 	 */
 	int frame_fd[2];
 	struct wl_event_source *frame_source;
 	struct wl_event_source *frame_timer;
 	int frame_delay_ms;
+
+	/*
+	 * A committed frame awaiting presentation feedback. Set on commit, drained
+	 * on the next vsync tick (which is when the frame turned to light).
+	 */
+	bool present_pending;
+	uint32_t present_commit_seq;
+	bool present_zero_copy;
 
 	/* NSWindow resize / backing-scale change (cocoa.m -> compositor). */
 	int resize_fd[2];

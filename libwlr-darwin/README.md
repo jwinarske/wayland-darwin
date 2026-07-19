@@ -34,8 +34,9 @@ main() ──► wlr_darwin_application_run(compositor_main, data)
   `dispatch_{sync,async}(dispatch_get_main_queue(), …)` in `cocoa.m`.
 - **main → compositor** (frame clock, input): written to per-purpose fds that
   the compositor's `wl_event_loop` reads (`wl_event_loop_add_fd`). The frame
-  clock is a `CVDisplayLink` tick today (CADisplayLink upgrade noted); input
-  serialization is the next workstream.
+  clock is a `CVDisplayLink` tick today (CADisplayLink upgrade noted); each tick
+  carries the vsync timestamp + refresh + counter that drive both the `frame`
+  and `present` events.
 
 ## Files
 
@@ -158,9 +159,22 @@ mirroring the X11 backend's `WLR_X11_OUTPUTS`); a compositor can also call
 `wlr_darwin_add_output()` directly to add or hot-plug outputs at runtime. In
 `darwin-tinywl` they tile side by side via `wlr_output_layout_add_auto`.
 
+## Present timing
+
+Presentation feedback is driven off the `CVDisplayLink`. A buffer commit is
+handed to WindowServer immediately but only turns to light at the next vsync, so
+`output.c` defers the `wlr_output` present event: it records the pending commit
+(and whether it was zero-copy), and on the following display-link tick sends
+`wlr_output_send_present` with the vsync's timestamp (`CVTimeStamp.hostTime`, in
+the `CLOCK_MONOTONIC` domain), refresh interval, and monotonic vsync counter —
+flagged `VSYNC | HW_CLOCK` (plus `ZERO_COPY` for IOSurface buffers). This gives
+`wp_presentation` clients real, hardware-derived timing instead of a synthetic
+stamp. If the display link reports no host time, it falls back to
+`clock_gettime` and drops the `HW_CLOCK` flag.
+
 ## Next
 
-- Display-link present timing / frame-completion feedback.
+- CADisplayLink (macOS 14+) to replace the deprecated CVDisplayLink.
 
 Metal `add_texture` now bakes `wl_output_transform` into the sampled UVs,
 `read_pixels` reads a texture back (screencopy), and IOSurface-backed client

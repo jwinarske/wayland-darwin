@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 
@@ -82,15 +83,15 @@ static bool output_commit(struct wlr_output *wlr_output,
 		output_present_buffer(output, state->buffer);
 
 		/*
-		 * TODO: move the present event to the CADisplayLink callback so
-		 * `when`/`seq` carry the real hardware timestamp.
+		 * The frame is handed to WindowServer now but turns to light at the
+		 * next vsync. Defer the presentation-feedback event to that display-link
+		 * tick (handle_frame) so it carries the real timestamp and vsync count.
+		 * commit_seq is this commit's — wlroots increments it after impl.commit.
 		 */
-		struct wlr_output_event_present present = {
-			.output = wlr_output,
-			.commit_seq = wlr_output->commit_seq + 1,
-			.presented = true,
-		};
-		wlr_output_send_present(wlr_output, &present);
+		output->present_pending = true;
+		output->present_commit_seq = wlr_output->commit_seq + 1;
+		output->present_zero_copy =
+			darwin_buffer_get_iosurface(state->buffer) != NULL;
 	}
 
 	return true;
@@ -310,14 +311,50 @@ static int handle_input(int fd, uint32_t mask, void *data) {
 	return 0;
 }
 
-/* Frame clock: cocoa.m's CVDisplayLink writes a byte per tick. */
+/*
+ * Frame clock: cocoa.m's CVDisplayLink writes a struct darwin_frame_info per
+ * vsync. Emit presentation feedback for the frame committed since the last tick
+ * (it turned to light at this vsync), then request the next frame. Ticks are
+ * coalesced — the most recent one carries the current timing.
+ */
 static int handle_frame(int fd, uint32_t mask, void *data) {
 	struct wlr_darwin_output *output = data;
-	char buf[64];
-	ssize_t n;
-	do {
-		n = read(fd, buf, sizeof(buf));
-	} while (n == (ssize_t)sizeof(buf));
+	struct darwin_frame_info info, last;
+	bool have = false;
+	while (read(fd, &info, sizeof(info)) == (ssize_t)sizeof(info)) {
+		last = info;
+		have = true;
+	}
+	if (!have) {
+		return 0;
+	}
+
+	if (output->present_pending) {
+		struct timespec when;
+		uint32_t flags = WLR_OUTPUT_PRESENT_VSYNC;
+		if (last.when_ns > 0) {
+			when.tv_sec = last.when_ns / 1000000000;
+			when.tv_nsec = last.when_ns % 1000000000;
+			flags |= WLR_OUTPUT_PRESENT_HW_CLOCK;
+		} else {
+			clock_gettime(CLOCK_MONOTONIC, &when);
+		}
+		if (output->present_zero_copy) {
+			flags |= WLR_OUTPUT_PRESENT_ZERO_COPY;
+		}
+		struct wlr_output_event_present present = {
+			.output = &output->wlr_output,
+			.commit_seq = output->present_commit_seq,
+			.presented = true,
+			.when = when,
+			.seq = (unsigned)last.seq,
+			.refresh = (int)last.refresh_ns,
+			.flags = flags,
+		};
+		wlr_output_send_present(&output->wlr_output, &present);
+		output->present_pending = false;
+	}
+
 	wlr_output_send_frame(&output->wlr_output);
 	return 0;
 }

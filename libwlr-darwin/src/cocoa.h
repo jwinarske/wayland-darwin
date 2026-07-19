@@ -22,10 +22,23 @@ struct darwin_output_geometry {
 };
 
 /*
+ * One record per display-link tick (vsync). Carries the timing the compositor
+ * needs to drive frame + presentation feedback: the vsync timestamp (in the
+ * CLOCK_MONOTONIC domain, from CVTimeStamp.hostTime), the refresh interval, and
+ * a monotonic vsync counter.
+ */
+struct darwin_frame_info {
+	int64_t when_ns;    // vsync time; 0 if the display link gave no host time
+	int64_t refresh_ns; // refresh interval; 0 if unknown
+	uint64_t seq;       // monotonic vsync counter
+};
+
+/*
  * Create a window of w x h logical points. Runs on the main thread (dispatched
  * + waited on). Fills *out_geom with the initial backing-pixel size and scale.
  *
- * frame_event_fd: one byte per display-link tick (frame clock).
+ * frame_event_fd: one struct darwin_frame_info per display-link tick (the frame
+ * clock + presentation timing).
  * input_event_fd: serialized input events (main->compositor bridge).
  * resize_event_fd: cocoa.m writes a struct darwin_output_geometry whenever the
  * window is resized or its backing scale changes; the backend turns each into a

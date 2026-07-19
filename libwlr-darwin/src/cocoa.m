@@ -15,6 +15,8 @@
 #import <CoreVideo/CoreVideo.h>
 #import <IOSurface/IOSurface.h>
 
+#include <mach/mach_time.h>
+
 #include <linux/input-event-codes.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -254,7 +256,8 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 	CALayer *layer;
 	CALayer *cursorLayer;  /* overlay above content; nil until first set_cursor */
 	CVDisplayLinkRef displayLink;
-	int frameFd;  /* write end: one byte per display tick */
+	uint64_t vsyncSeq; /* monotonic vsync counter (display-link thread) */
+	int frameFd;  /* write end: struct darwin_frame_info per display tick */
 	int inputFd;  /* write end: serialized input events */
 	/* Hardware cursor state (main-thread only). Hotspot/size in buffer pixels; */
 	/* position in output backing pixels. */
@@ -267,13 +270,35 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 @implementation WlrDarwinWindow
 @end
 
-/* CVDisplayLink runs on its own thread; poke the compositor's frame fd. */
+/* mach_absolute_time units -> nanoseconds. CVTimeStamp.hostTime is in the same
+ * units as mach_absolute_time(), which on Darwin shares CLOCK_MONOTONIC's base. */
+static int64_t host_to_nsec(uint64_t host) {
+	static mach_timebase_info_data_t tb;
+	if (tb.denom == 0) {
+		mach_timebase_info(&tb);
+	}
+	return (int64_t)((__uint128_t)host * tb.numer / tb.denom);
+}
+
+/*
+ * CVDisplayLink runs on its own thread; per vsync, hand the compositor the
+ * timing it needs for the frame clock and presentation feedback. `now` is this
+ * vsync — i.e. when the last committed frame turned to light.
+ */
 static CVReturn display_link_cb(CVDisplayLinkRef link, const CVTimeStamp *now,
 		const CVTimeStamp *out, CVOptionFlags flagsIn, CVOptionFlags *flagsOut,
 		void *ctx) {
 	WlrDarwinWindow *win = (__bridge WlrDarwinWindow *)ctx;
-	char b = 1;
-	(void)write(win->frameFd, &b, 1);
+	struct darwin_frame_info info = { .seq = ++win->vsyncSeq };
+	if (now->flags & kCVTimeStampHostTimeValid) {
+		info.when_ns = host_to_nsec(now->hostTime);
+	}
+	if ((now->flags & kCVTimeStampVideoRefreshPeriodValid) &&
+			now->videoTimeScale != 0) {
+		info.refresh_ns = (int64_t)(now->videoRefreshPeriod *
+			1000000000.0 / now->videoTimeScale);
+	}
+	(void)write(win->frameFd, &info, sizeof(info));
 	return kCVReturnSuccess;
 }
 
