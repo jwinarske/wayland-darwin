@@ -64,16 +64,19 @@ WP_BUILD="$SRC/wayland-protocols/build-macos"
 meson install -C "$WP_BUILD"
 
 # ---- 5. build wayland-cxx-scanner + examples -------------------------------
-# keyboard.hpp/cursor.hpp use <sys/timerfd.h>; on Darwin that comes from
-# epoll-shim, so inject its include dir and link it. werror is relaxed for the
-# port (clang on macOS emits warnings gcc/Linux does not).
+# Darwin injections (no source patches to the upstream project):
+#  - keyboard.hpp/cursor.hpp use <sys/timerfd.h> -> epoll-shim's include + link
+#  - some examples include <linux/input-event-codes.h> (vendored in
+#    wlroots-darwin/compat) and <sys/sysmacros.h> (shim in ./compat)
+#  - werror relaxed (clang on macOS emits warnings gcc/Linux does not)
 echo "==> building wayland-cxx-scanner"
 WCS="$SRC/wayland-cxx-scanner"
 WCS_BUILD="$WCS/build-macos"
+COMPAT_INC="-I$PREFIX/include/libepoll-shim -I$ROOT/wlroots-darwin/compat -I$HERE/compat"
 WCS_OPTS=(
 	--prefix "$PREFIX"
 	-Dexamples=true -Dtests=false -Dwerror=false
-	"-Dcpp_args=-I$PREFIX/include/libepoll-shim"
+	"-Dcpp_args=$COMPAT_INC"
 	"-Dcpp_link_args=-L$PREFIX/lib -lepoll-shim -Wl,-rpath,$PREFIX/lib"
 )
 if [ -d "$WCS_BUILD" ]; then
