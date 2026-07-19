@@ -82,8 +82,8 @@ static bool output_commit(struct wlr_output *wlr_output,
 		output_present_buffer(output, state->buffer);
 
 		/*
-		 * TODO(D6/W7): move the present event to the CADisplayLink callback
-		 * so `when`/`seq` carry the real hardware timestamp.
+		 * TODO: move the present event to the CADisplayLink callback so
+		 * `when`/`seq` carry the real hardware timestamp.
 		 */
 		struct wlr_output_event_present present = {
 			.output = wlr_output,
@@ -192,7 +192,7 @@ static const struct wlr_pointer_impl pointer_impl = {
 };
 
 /*
- * D3 bridge: translate one decoded input record into wlr input events. Key
+ * Bridge: translate one decoded input record into wlr input events. Key
  * events go to the backend's single keyboard; pointer events to this output's
  * own pointer (output_name binds absolute motion to the right window).
  */
@@ -310,7 +310,7 @@ static int handle_input(int fd, uint32_t mask, void *data) {
 	return 0;
 }
 
-/* D6 frame clock: cocoa.m's CVDisplayLink writes a byte per tick. */
+/* Frame clock: cocoa.m's CVDisplayLink writes a byte per tick. */
 static int handle_frame(int fd, uint32_t mask, void *data) {
 	struct wlr_darwin_output *output = data;
 	char buf[64];

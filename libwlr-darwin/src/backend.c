@@ -1,14 +1,9 @@
 #include <assert.h>
 #include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/socket.h>
 
-#include <wayland-server-protocol.h>
 #include <wlr/backend/interface.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/interfaces/wlr_output.h>
-#include <wlr/interfaces/wlr_pointer.h>
 #include <wlr/util/log.h>
 
 #include "wlr-darwin.h"

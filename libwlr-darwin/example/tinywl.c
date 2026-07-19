@@ -28,7 +28,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 /* Darwin backend (this file is wlroots' tinywl, adapted to run on macOS:
- * the D3 trampoline plus the Cocoa backend and IOSurface allocator). */
+ * the application trampoline plus the Cocoa backend and IOSurface allocator). */
 #include <wlr-darwin.h>
 
 /* For brevity's sake, struct members are annotated where they are used. */
@@ -1154,6 +1154,6 @@ int main(int argc, char *argv[]) {
 	}
 
 	/* AppKit owns the process main thread; the compositor runs on a secondary
-	 * thread via the Darwin backend's trampoline (D3). */
+	 * thread via the Darwin backend's trampoline. */
 	return wlr_darwin_application_run(compositor_main, startup_cmd);
 }

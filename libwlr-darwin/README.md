@@ -83,7 +83,7 @@ macOS`) compiles + links it on Apple Silicon.
 
 To see a window, run `darwin-smoke` (a colour fill) or `darwin-tinywl` from a
 normal login session (not over headless SSH/CI). `darwin-tinywl` is wlroots'
-reference compositor with ~10 lines changed (the D3 trampoline plus
+reference compositor with ~10 lines changed (the application trampoline plus
 `wlr_darwin_backend_create` / `wlr_darwin_allocator_create`); a Wayland client
 launched into its `WAYLAND_DISPLAY` renders as tiled surfaces in the window.
 

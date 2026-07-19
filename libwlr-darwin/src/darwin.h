@@ -42,7 +42,7 @@ struct wlr_darwin_output {
 	struct wlr_pointer pointer;
 
 	/*
-	 * D3 thread bridge: cocoa.m (main thread) posts this window's serialized
+	 * Thread bridge: cocoa.m (main thread) posts this window's serialized
 	 * input events into input_fd[1]; the compositor loop reads input_fd[0].
 	 * input_buf holds a partially-read record across reads. Key events are
 	 * routed to the backend keyboard; pointer events to this output's pointer.
@@ -53,7 +53,7 @@ struct wlr_darwin_output {
 	size_t input_buf_len;
 
 	/*
-	 * D6 frame clock. The real clock is CADisplayLink in cocoa.m writing to
+	 * Frame clock. The real clock is CADisplayLink in cocoa.m writing to
 	 * frame_fd[1]; frame_source (on frame_fd[0]) then calls send_frame. A
 	 * plain timer is kept as a debug fallback.
 	 */

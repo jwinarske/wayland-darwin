@@ -95,7 +95,7 @@ full referenced set regardless, to guarantee a one-shot link.
 - [x] **Runtime smoke** — `headless-smoke.c` stands up the always-built headless
   backend + pixman renderer + shm allocator, creates a 640x480 output, and
   renders + commits one frame (verified on a native Linux wlroots build; runs on
-  macOS against the shim as part of the build). This is the D2 phase-1 software
+  macOS against the shim as part of the build). This is the software allocator
   path working end to end.
 
 ## Next

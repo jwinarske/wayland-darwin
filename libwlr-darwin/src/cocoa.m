@@ -1,7 +1,7 @@
 /*
- * cocoa.m — all AppKit/Objective-C for the Darwin backend (D7 containment).
+ * cocoa.m — all AppKit/Objective-C for the Darwin backend.
  *
- * Threading (D3): AppKit runs on the process main thread; the compositor runs
+ * Threading: AppKit runs on the process main thread; the compositor runs
  * on a secondary thread started by wlr_darwin_application_run(). Window
  * operations invoked from the compositor thread are marshalled to the main
  * thread via dispatch_{sync,async}(dispatch_get_main_queue(), ...). The reverse
@@ -68,7 +68,7 @@ static uint32_t event_time_msec(NSEvent *e) {
 
 - (void)keyDown:(NSEvent *)e {
 	if (e.isARepeat) {
-		return; /* key repeat is client-side (D5b) */
+		return; /* key repeat is client-side */
 	}
 	[self sendKeyCode:e.keyCode pressed:YES time:event_time_msec(e)];
 }
@@ -254,8 +254,8 @@ static NSEventModifierFlags mask_for_keycode(uint16_t kvk) {
 	CALayer *layer;
 	CALayer *cursorLayer;  /* overlay above content; nil until first set_cursor */
 	CVDisplayLinkRef displayLink;
-	int frameFd;  /* write end: one byte per display tick (D6) */
-	int inputFd;  /* write end: serialized input events (D3/W5) */
+	int frameFd;  /* write end: one byte per display tick */
+	int inputFd;  /* write end: serialized input events */
 	/* Hardware cursor state (main-thread only). Hotspot/size in buffer pixels; */
 	/* position in output backing pixels. */
 	int cursorHotspotX, cursorHotspotY;
@@ -324,7 +324,7 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 		win->frameFd = frame_event_fd;
 		win->inputFd = input_event_fd;
 
-		/* D6 frame clock. TODO: CADisplayLink on macOS 14+ for lower overhead. */
+		/* Frame clock. TODO: CADisplayLink on macOS 14+ for lower overhead. */
 		CVDisplayLinkCreateWithActiveCGDisplays(&win->displayLink);
 		CVDisplayLinkSetOutputCallback(win->displayLink, display_link_cb,
 			(__bridge void *)win);

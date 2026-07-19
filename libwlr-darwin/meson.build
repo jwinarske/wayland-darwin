@@ -9,7 +9,7 @@ if host_machine.system() != 'darwin'
 endif
 
 # Objective-C is added explicitly so this stays scoped to the out-of-tree
-# project (D7); ARC is enabled for the ObjC sources only.
+# project; ARC is enabled for the ObjC sources only.
 add_languages('objc', native: false)
 
 add_project_arguments('-DWLR_USE_UNSTABLE', language: ['c', 'objc'])

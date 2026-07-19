@@ -1,5 +1,5 @@
 /*
- * Input bridge wire format (D3 main -> compositor).
+ * Input bridge wire format (main -> compositor).
  *
  * cocoa.m (main thread) captures NSEvents, translates them to these fixed-size
  * records, and writes them to the backend's input fd. backend.c (compositor
@@ -36,7 +36,7 @@ struct darwin_input_event {
 /*
  * Translate a Carbon/AppKit virtual key code (NSEvent.keyCode) to a Linux evdev
  * key code (xkbcommon's pivot); returns 0 if unmapped. The single maintained
- * translation table (D5b).
+ * translation table.
  */
 uint32_t darwin_kvk_to_evdev(uint16_t kvk);
 

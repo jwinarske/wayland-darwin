@@ -1,5 +1,5 @@
 /*
- * IOSurface allocator (D2 phase 1).
+ * IOSurface allocator.
  *
  * Produces wlr_buffers backed by IOSurface memory. The compositor's renderer
  * (pixman) draws directly into the IOSurface via begin/end_data_ptr_access

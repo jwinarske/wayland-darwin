@@ -1,5 +1,5 @@
 /*
- * metal.m — all Metal / Objective-C for the renderer (D7 containment).
+ * metal.m — all Metal / Objective-C for the renderer.
  *
  * ARC does not manage Objective-C pointers stored in malloc'd C structs, so the
  * device/pass state lives in ObjC objects handed across the C boundary as

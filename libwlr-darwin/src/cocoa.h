@@ -1,5 +1,5 @@
 /*
- * C <-> Objective-C boundary (D7: all ObjC/AppKit is confined to cocoa.m).
+ * C <-> Objective-C boundary (all ObjC/AppKit is confined to cocoa.m).
  *
  * These functions are called from the pure-C backend/output code and are
  * implemented in cocoa.m. Window operations are dispatched to the main thread
@@ -25,8 +25,8 @@ struct darwin_output_geometry {
  * Create a window of w x h logical points. Runs on the main thread (dispatched
  * + waited on). Fills *out_geom with the initial backing-pixel size and scale.
  *
- * frame_event_fd: one byte per display-link tick (D6 frame clock).
- * input_event_fd: serialized input events (D3 main->compositor bridge).
+ * frame_event_fd: one byte per display-link tick (frame clock).
+ * input_event_fd: serialized input events (main->compositor bridge).
  * resize_event_fd: cocoa.m writes a struct darwin_output_geometry whenever the
  * window is resized or its backing scale changes; the backend turns each into a
  * wlr_output_send_request_state().
@@ -36,11 +36,10 @@ darwin_cocoa_window *darwin_cocoa_window_create(unsigned int w, unsigned int h,
 	struct darwin_output_geometry *out_geom);
 
 /*
- * Present a mapped CPU pixel buffer to the window's CALayer.
- *
- * MVP software path (copy). TODO(W4): replace with a zero-copy IOSurface
- * assignment to CALayer.contents once the IOSurface allocator lands.
- * `format` is a DRM fourcc; only LINEAR BGRA/XRGB is handled for now.
+ * Present a mapped CPU pixel buffer to the window's CALayer — the software copy
+ * fallback for foreign buffers; the zero-copy path is
+ * darwin_cocoa_window_present_iosurface. `format` is a DRM fourcc; only LINEAR
+ * BGRA/XRGB is handled.
  */
 void darwin_cocoa_window_present(darwin_cocoa_window *win, const void *data,
 	uint32_t width, uint32_t height, uint32_t stride, uint32_t drm_format);

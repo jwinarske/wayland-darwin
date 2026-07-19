@@ -3,7 +3,7 @@
  *
  * Opens a native macOS window (a wlr_output) and renders a solid colour into it
  * every frame via the pixman renderer + shm allocator, presented through the
- * Cocoa backend. Exercises the whole W3 path: the application trampoline, the
+ * Cocoa backend. Exercises the whole backend path: the application trampoline, the
  * compositor/main thread split, window creation, the frame clock, and present.
  *
  * This has no Wayland clients yet — it is the backend bring-up demo.

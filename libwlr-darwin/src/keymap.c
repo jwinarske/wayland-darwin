@@ -2,7 +2,7 @@
  * kVK (Carbon/AppKit virtual key code) -> Linux evdev key code.
  *
  * xkbcommon speaks evdev codes, so this is the single translation table the
- * Darwin backend maintains (D5b). Compositor-owned xkb keymaps then turn these
+ * Darwin backend maintains. Compositor-owned xkb keymaps then turn these
  * into keysyms. Returns 0 for keys we don't map.
  */
 #include <linux/input-event-codes.h>
