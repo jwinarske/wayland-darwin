@@ -104,6 +104,23 @@ static void pass_add_rect(struct wlr_render_pass *wlr_pass,
 		blend);
 }
 
+/* Map an output-quad corner (cx,cy in {0,1}, top-left origin) to a normalized
+ * texture coordinate under a wl_output_transform applied to the source. */
+static void transform_corner(enum wl_output_transform tr, float cx, float cy,
+		float *tx, float *ty) {
+	switch (tr) {
+	case WL_OUTPUT_TRANSFORM_90:          *tx = cy;     *ty = 1 - cx; break;
+	case WL_OUTPUT_TRANSFORM_180:         *tx = 1 - cx; *ty = 1 - cy; break;
+	case WL_OUTPUT_TRANSFORM_270:         *tx = 1 - cy; *ty = cx;     break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED:     *tx = 1 - cx; *ty = cy;     break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_90:  *tx = cy;     *ty = cx;     break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180: *tx = cx;     *ty = 1 - cy; break;
+	case WL_OUTPUT_TRANSFORM_FLIPPED_270: *tx = 1 - cy; *ty = 1 - cx; break;
+	case WL_OUTPUT_TRANSFORM_NORMAL:
+	default:                              *tx = cx;     *ty = cy;     break;
+	}
+}
+
 static void pass_add_texture(struct wlr_render_pass *wlr_pass,
 		const struct wlr_render_texture_options *options) {
 	struct wlr_darwin_metal_pass *pass = wl_container_of(wlr_pass, pass, base);
@@ -129,12 +146,22 @@ static void pass_add_texture(struct wlr_render_pass *wlr_pass,
 		sh = options->src_box.height / th;
 	}
 
+	/* Bake the transform into the four destination-corner UVs (TL,TR,BL,BR). */
+	static const float corners[4][2] = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
+	float uv[8];
+	for (int i = 0; i < 4; i++) {
+		float txc, tyc;
+		transform_corner(options->transform, corners[i][0], corners[i][1],
+			&txc, &tyc);
+		uv[i * 2 + 0] = sx + txc * sw;
+		uv[i * 2 + 1] = sy + tyc * sh;
+	}
+
 	float alpha = options->alpha != NULL ? *options->alpha : 1.0f;
 	int nearest = options->filter_mode == WLR_SCALE_FILTER_NEAREST;
 
-	/* TODO: apply options->transform to the source coordinates. */
 	darwin_metal_pass_texture(pass->pass, texture->tex,
-		dst.x, dst.y, dst.width, dst.height, sx, sy, sw, sh, alpha, nearest);
+		dst.x, dst.y, dst.width, dst.height, uv, alpha, nearest);
 }
 
 static bool pass_submit(struct wlr_render_pass *wlr_pass) {
@@ -203,8 +230,19 @@ static bool texture_update_from_buffer(struct wlr_texture *wlr_texture,
 
 static bool texture_read_pixels(struct wlr_texture *wlr_texture,
 		const struct wlr_texture_read_pixels_options *options) {
-	/* TODO: MTLTexture getBytes readback (for screencopy of textures). */
-	return false;
+	struct wlr_darwin_metal_texture *texture =
+		darwin_texture_from_texture(wlr_texture);
+	struct wlr_box src = options->src_box;
+	if (src.width == 0 || src.height == 0) {
+		src.x = 0;
+		src.y = 0;
+		src.width = wlr_texture->width;
+		src.height = wlr_texture->height;
+	}
+	uint8_t *dst = (uint8_t *)options->data +
+		(size_t)options->dst_y * options->stride + (size_t)options->dst_x * 4;
+	return darwin_metal_texture_read(texture->tex, dst, options->stride,
+		src.x, src.y, src.width, src.height);
 }
 
 static uint32_t texture_preferred_read_format(struct wlr_texture *wlr_texture) {
@@ -229,17 +267,25 @@ static struct wlr_texture *texture_from_buffer(struct wlr_renderer *wlr,
 		struct wlr_buffer *buffer) {
 	struct wlr_darwin_metal_renderer *r = renderer_from(wlr);
 
-	void *data;
-	uint32_t format;
-	size_t stride;
-	if (!wlr_buffer_begin_data_ptr_access(buffer,
-			WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
-		wlr_log(WLR_ERROR, "Metal: client buffer is not CPU-readable");
-		return NULL;
+	darwin_metal_texture *mtex;
+	darwin_iosurface *surface = darwin_buffer_get_iosurface(buffer);
+	if (surface != NULL) {
+		/* Zero-copy: sample the IOSurface directly, no upload. */
+		mtex = darwin_metal_texture_from_iosurface(r->metal,
+			darwin_iosurface_ref(surface), buffer->width, buffer->height);
+	} else {
+		void *data;
+		uint32_t format;
+		size_t stride;
+		if (!wlr_buffer_begin_data_ptr_access(buffer,
+				WLR_BUFFER_DATA_PTR_ACCESS_READ, &data, &format, &stride)) {
+			wlr_log(WLR_ERROR, "Metal: client buffer is not CPU-readable");
+			return NULL;
+		}
+		mtex = darwin_metal_texture_create(r->metal, buffer->width,
+			buffer->height, format, data, (uint32_t)stride);
+		wlr_buffer_end_data_ptr_access(buffer);
 	}
-	darwin_metal_texture *mtex = darwin_metal_texture_create(r->metal,
-		buffer->width, buffer->height, format, data, (uint32_t)stride);
-	wlr_buffer_end_data_ptr_access(buffer);
 	if (mtex == NULL) {
 		return NULL;
 	}

@@ -234,11 +234,41 @@ darwin_metal_texture *darwin_metal_texture_create(darwin_metal *handle,
 	return (darwin_metal_texture *)CFBridgingRetain(t);
 }
 
+darwin_metal_texture *darwin_metal_texture_from_iosurface(darwin_metal *mhandle,
+		void *iosurface_ref, uint32_t width, uint32_t height) {
+	DarwinMetal *m = (__bridge DarwinMetal *)mhandle;
+	IOSurfaceRef surface = (IOSurfaceRef)iosurface_ref;
+
+	MTLTextureDescriptor *td = [MTLTextureDescriptor
+		texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+		width:width height:height mipmapped:NO];
+	td.usage = MTLTextureUsageShaderRead;
+	td.storageMode = MTLStorageModeShared;
+	id<MTLTexture> texture = [m->device newTextureWithDescriptor:td
+		iosurface:surface plane:0];
+	if (texture == nil) {
+		return NULL;
+	}
+	DarwinMetalTexture *t = [DarwinMetalTexture new];
+	t->texture = texture;
+	t->width = width;
+	t->height = height;
+	return (darwin_metal_texture *)CFBridgingRetain(t);
+}
+
 bool darwin_metal_texture_update(darwin_metal_texture *handle, const void *data,
 		uint32_t stride) {
 	DarwinMetalTexture *t = (__bridge DarwinMetalTexture *)handle;
 	[t->texture replaceRegion:MTLRegionMake2D(0, 0, t->width, t->height)
 		mipmapLevel:0 withBytes:data bytesPerRow:stride];
+	return true;
+}
+
+bool darwin_metal_texture_read(darwin_metal_texture *handle, void *dst,
+		uint32_t stride, uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+	DarwinMetalTexture *t = (__bridge DarwinMetalTexture *)handle;
+	[t->texture getBytes:dst bytesPerRow:stride
+		fromRegion:MTLRegionMake2D(x, y, w, h) mipmapLevel:0];
 	return true;
 }
 
@@ -252,7 +282,7 @@ void darwin_metal_texture_destroy(darwin_metal_texture *handle) {
 
 void darwin_metal_pass_texture(darwin_metal_pass *handle,
 		darwin_metal_texture *thandle, int dx, int dy, int dw, int dh,
-		float sx, float sy, float sw, float sh, float alpha, int nearest) {
+		const float uv[8], float alpha, int nearest) {
 	DarwinMetalPass *p = (__bridge DarwinMetalPass *)handle;
 	DarwinMetalTexture *t = (__bridge DarwinMetalTexture *)thandle;
 	float W = (float)p->width, H = (float)p->height;
@@ -261,11 +291,10 @@ void darwin_metal_pass_texture(darwin_metal_pass *handle,
 	float x1 = 2.0f * (float)(dx + dw) / W - 1.0f;
 	float y0 = 1.0f - 2.0f * (float)dy / H;
 	float y1 = 1.0f - 2.0f * (float)(dy + dh) / H;
-	float u0 = sx, u1 = sx + sw, v0 = sy, v1 = sy + sh;
-	/* Each vertex is (ndc_x, ndc_y, u, v); triangle strip. */
+	/* Vertex = (ndc_x, ndc_y, u, v); strip order TL, TR, BL, BR (matches uv). */
 	float verts[16] = {
-		x0, y0, u0, v0,  x1, y0, u1, v0,
-		x0, y1, u0, v1,  x1, y1, u1, v1,
+		x0, y0, uv[0], uv[1],  x1, y0, uv[2], uv[3],
+		x0, y1, uv[4], uv[5],  x1, y1, uv[6], uv[7],
 	};
 
 	[p->enc setRenderPipelineState:p->metal->textured];

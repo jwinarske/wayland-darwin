@@ -118,9 +118,12 @@ composited green texture, read back from the IOSurface.
 
 ## Next
 
-- Metal `add_texture` transforms (`wl_output_transform`) and damage-region
-  texture upload; zero-copy IOSurface-wrap for IOSurface-backed client buffers.
+- Metal: damage-region texture upload; distinct blend modes; `render_timer`.
 - Multi-output (more than one NSWindow); hardware cursor CALayer fast path.
+
+Metal `add_texture` now bakes `wl_output_transform` into the sampled UVs,
+`read_pixels` reads a texture back (screencopy), and IOSurface-backed client
+buffers are wrapped zero-copy instead of uploaded — all checked by `metal-smoke`.
 
 HiDPI (backingScaleFactor → output scale, backing-pixel mode) and live window
 resize (NSWindow resize / display change → `wlr_output_send_request_state`) are

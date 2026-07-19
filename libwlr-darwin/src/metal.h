@@ -41,19 +41,26 @@ typedef struct darwin_metal_texture darwin_metal_texture;
 darwin_metal_texture *darwin_metal_texture_create(darwin_metal *metal,
 	uint32_t width, uint32_t height, uint32_t drm_format,
 	const void *data, uint32_t stride);
+/* Wrap an existing IOSurface as a sampleable texture (zero-copy). */
+darwin_metal_texture *darwin_metal_texture_from_iosurface(darwin_metal *metal,
+	void *iosurface_ref, uint32_t width, uint32_t height);
 /* Re-upload the whole texture (damage-aware upload is a later optimization). */
 bool darwin_metal_texture_update(darwin_metal_texture *tex, const void *data,
 	uint32_t stride);
+/* Read a region of the texture back into CPU memory (BGRA). */
+bool darwin_metal_texture_read(darwin_metal_texture *tex, void *dst,
+	uint32_t stride, uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 void darwin_metal_texture_destroy(darwin_metal_texture *tex);
 
 /*
- * Sample `tex` onto a quad. Destination box in target pixels (top-left origin);
- * source box normalized [0,1] in texture space. `alpha` scales opacity;
- * `nearest` picks nearest vs bilinear filtering.
+ * Sample `tex` onto a quad. Destination box in target pixels (top-left origin).
+ * uv holds the four source texture coordinates for the destination corners in
+ * the order TL, TR, BL, BR (each u then v) — the caller bakes any
+ * wl_output_transform into them. `alpha` scales opacity; `nearest` selects
+ * nearest vs bilinear filtering.
  */
 void darwin_metal_pass_texture(darwin_metal_pass *pass, darwin_metal_texture *tex,
-	int dx, int dy, int dw, int dh,
-	float sx, float sy, float sw, float sh,
+	int dx, int dy, int dw, int dh, const float uv[8],
 	float alpha, int nearest);
 
 #endif
